@@ -3,11 +3,16 @@
 import dynamic from "next/dynamic";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
+import { plainTextToEmailHtml } from "@/lib/env-message-html";
 import {
   extractEmailsFromPaste,
   parseEmailPaste,
   partitionEmails,
 } from "@/lib/recipients";
+import type { RichTextEditorHandle } from "@/components/RichTextEditor";
+import { CustomMergeFieldsPanel } from "@/components/CustomMergeFieldsPanel";
+import { DynamicPlaceholdersPanel } from "@/components/DynamicPlaceholdersPanel";
+import { ReferralTemplatePicker } from "@/components/ReferralTemplatePicker";
 
 const RichTextEditor = dynamic(
   () => import("@/components/RichTextEditor").then((m) => m.RichTextEditor),
@@ -45,6 +50,8 @@ export function ComposerForm() {
   const [lastCampaignId, setLastCampaignId] = useState<string | null>(null);
   const [liveCampaign, setLiveCampaign] = useState<CampaignDetail | null>(null);
   const recipientsRef = useRef<HTMLTextAreaElement>(null);
+  const subjectInputRef = useRef<HTMLInputElement>(null);
+  const messageEditorRef = useRef<RichTextEditorHandle>(null);
   const csvInputRef = useRef<HTMLInputElement>(null);
   const attachmentsInputRef = useRef<HTMLInputElement>(null);
   const submitLockRef = useRef(false);
@@ -145,6 +152,48 @@ export function ComposerForm() {
     pendingRichTextRemount.current = false;
     setRichTextBootKey((k) => k + 1);
   }, [bodyHtml]);
+
+  const applyReferralTemplate = useCallback(
+    ({ subject: nextSubject, bodyPlain }: { subject: string; bodyPlain: string }) => {
+      const html = plainTextToEmailHtml(bodyPlain);
+      setSubject(nextSubject);
+      setBodyHtml(html);
+      pendingRichTextRemount.current = true;
+    },
+    [],
+  );
+
+  const applyDynamicPlaceholders = useCallback(
+    ({ subject: s, bodyHtml: h }: { subject: string; bodyHtml: string }) => {
+      setSubject(s);
+      setBodyHtml(h);
+      pendingRichTextRemount.current = true;
+    },
+    [],
+  );
+
+  const insertTokenInSubject = useCallback((token: string) => {
+    const el = subjectInputRef.current;
+    if (el) {
+      const start = el.selectionStart ?? 0;
+      const end = el.selectionEnd ?? 0;
+      setSubject((prev) => {
+        const next = prev.slice(0, start) + token + prev.slice(end);
+        queueMicrotask(() => {
+          el.focus();
+          const pos = start + token.length;
+          el.setSelectionRange(pos, pos);
+        });
+        return next;
+      });
+    } else {
+      setSubject((s) => s + (s.length ? " " : "") + token);
+    }
+  }, []);
+
+  const insertTokenInMessage = useCallback((token: string) => {
+    messageEditorRef.current?.insertAtCursor(token);
+  }, []);
 
   const pollCampaign = useCallback(async (id: string) => {
     try {
@@ -311,9 +360,17 @@ export function ComposerForm() {
         </div>
       </div>
 
+      <ReferralTemplatePicker onApply={applyReferralTemplate} />
+
+      <CustomMergeFieldsPanel
+        onInsertSubject={insertTokenInSubject}
+        onInsertMessage={insertTokenInMessage}
+      />
+
       <label className="block space-y-2">
         <span className={labelClass}>Subject</span>
         <input
+          ref={subjectInputRef}
           type="text"
           required
           value={subject}
@@ -323,9 +380,20 @@ export function ComposerForm() {
         />
       </label>
 
+      <DynamicPlaceholdersPanel
+        subject={subject}
+        bodyHtml={bodyHtml}
+        onApply={applyDynamicPlaceholders}
+      />
+
       <div className="space-y-2">
         <span className={labelClass}>Message</span>
-        <RichTextEditor bootKey={richTextBootKey} value={bodyHtml} onChange={setBodyHtml} />
+        <RichTextEditor
+          ref={messageEditorRef}
+          bootKey={richTextBootKey}
+          value={bodyHtml}
+          onChange={setBodyHtml}
+        />
       </div>
 
       <div className="space-y-6">

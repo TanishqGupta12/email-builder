@@ -1,9 +1,14 @@
 "use client";
 
+import { forwardRef, useImperativeHandle } from "react";
 import Placeholder from "@tiptap/extension-placeholder";
 import TextAlign from "@tiptap/extension-text-align";
 import { EditorContent, useEditor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
+
+export type RichTextEditorHandle = {
+  insertAtCursor: (text: string) => void;
+};
 
 type Props = {
   value: string;
@@ -13,12 +18,16 @@ type Props = {
   bootKey?: number;
 };
 
-export function RichTextEditor({
-  value,
-  onChange,
-  placeholder = "Write your message…",
-  bootKey = 0,
-}: Props) {
+export const RichTextEditor = forwardRef<RichTextEditorHandle, Props>(
+  function RichTextEditor(
+    {
+      value,
+      onChange,
+      placeholder = "Write your message…",
+      bootKey = 0,
+    },
+    ref,
+  ) {
   const editor = useEditor({
     extensions: [
       StarterKit.configure({
@@ -50,8 +59,18 @@ export function RichTextEditor({
       onChange(ed.getHTML());
     },
   }, [bootKey]);
-  console.log("value", value);
-  
+
+  useImperativeHandle(
+    ref,
+    () => ({
+      insertAtCursor: (text: string) => {
+        if (!editor || editor.isDestroyed) return;
+        editor.chain().focus().insertContent(text).run();
+      },
+    }),
+    [editor],
+  );
+
   const setLink = () => {
     if (!editor) return;
     const prev = editor.getAttributes("link").href as string | undefined;
@@ -214,7 +233,10 @@ export function RichTextEditor({
       <EditorContent editor={editor} />
     </div>
   );
-}
+  },
+);
+
+RichTextEditor.displayName = "RichTextEditor";
 
 function ToolbarDivider() {
   return (
