@@ -47,6 +47,7 @@ export function RichTextEditor({
       onChange(ed.getHTML());
     },
   });
+console.log("value", value);
 
   const setLink = () => {
     if (!editor) return;
