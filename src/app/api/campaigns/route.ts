@@ -1,8 +1,9 @@
+import { randomUUID } from "crypto";
 import { after } from "next/server";
 import { NextResponse } from "next/server";
 import {
-  addAttachment,
   createCampaign,
+  getCampaign,
   listRecentCampaigns,
 } from "@/lib/campaign-store";
 import {
@@ -105,13 +106,18 @@ export async function POST(req: Request) {
   for (const item of attachmentFiles) {
     if (!(item instanceof File) || item.size === 0) continue;
     const saved = await saveAttachment(campaign.id, item);
-    addAttachment(campaign.id, {
-      filename: saved.filename,
-      originalName: saved.originalName,
-      mimeType: saved.mimeType,
-      size: saved.size,
-      path: saved.path,
-    });
+    const c = getCampaign(campaign.id);
+    if (c) {
+      c.attachments.push({
+        id: randomUUID(),
+        filename: saved.filename,
+        originalName: saved.originalName,
+        mimeType: saved.mimeType,
+        size: saved.size,
+        path: saved.path,
+      });
+      c.updatedAt = new Date();
+    }
   }
 
   after(async () => {

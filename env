@@ -1,0 +1,17 @@
+SMTP_HOST="smtp.gmail.com"
+SMTP_PORT="587"
+SMTP_USER="tanishqgupta19@gmail.com"
+SMTP_PASS="jmaobqtmgjnglhvd"
+SUBJECT="Application for the DevOps position"
+MESSAGE= "I hope this email finds you well.
+
+I am writing to apply for the DevOps position at your company. I have a total of 3 years of experience, including 2 years in backend development and 1 year in cloud technologies.
+
+I hold a qualification in Computer Science / IT and have practical experience working with cloud platforms, deployment, monitoring, and basic cloud security practices. I am highly motivated, quick to learn, and passionate about building scalable and reliable cloud solutions.
+
+I would welcome the opportunity to discuss how my skills and experience can add value to your team. Please find my resume attached for your review.
+
+Thank you for your time and consideration. I look forward to hearing from you.I hope this email finds you well.
+
+contact me at tanishqgupta19@gmail.com and 9026868822
+"

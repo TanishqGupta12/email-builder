@@ -81,16 +81,6 @@ export function createCampaign(input: {
   return campaign;
 }
 
-export function addAttachment(
-  campaignId: string,
-  data: Omit<Attachment, "id">,
-): void {
-  const c = store.get(campaignId);
-  if (!c) return;
-  c.attachments.push({ ...data, id: randomUUID() });
-  c.updatedAt = new Date();
-}
-
 export function getCampaign(id: string): Campaign | undefined {
   return store.get(id);
 }

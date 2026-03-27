@@ -45,7 +45,29 @@ export function ComposerForm() {
   const [lastCampaignId, setLastCampaignId] = useState<string | null>(null);
   const [liveCampaign, setLiveCampaign] = useState<CampaignDetail | null>(null);
   const recipientsRef = useRef<HTMLTextAreaElement>(null);
+  const csvInputRef = useRef<HTMLInputElement>(null);
+  const attachmentsInputRef = useRef<HTMLInputElement>(null);
   const submitLockRef = useRef(false);
+
+  const clearCsv = useCallback(() => {
+    setCsvFile(null);
+    if (csvInputRef.current) csvInputRef.current.value = "";
+  }, []);
+
+  const removeAttachment = useCallback((index: number) => {
+    setFiles((prev) => {
+      const next = prev.filter((_, i) => i !== index);
+      if (next.length === 0 && attachmentsInputRef.current) {
+        attachmentsInputRef.current.value = "";
+      }
+      return next;
+    });
+  }, []);
+
+  const clearAllAttachments = useCallback(() => {
+    setFiles([]);
+    if (attachmentsInputRef.current) attachmentsInputRef.current.value = "";
+  }, []);
 
   const pasteRecipientCount = useMemo(() => {
     const { valid } = partitionEmails(parseEmailPaste(recipientsText));
@@ -184,30 +206,109 @@ export function ComposerForm() {
     <>
     {liveCampaign && <CampaignStatusPanel campaign={liveCampaign} />}
     <form onSubmit={onSubmit} className="min-w-0 space-y-5 sm:space-y-6">
-      <div className="grid gap-5 sm:grid-cols-2">
-        <label className="block space-y-2">
-          <span className={labelClass}>Sender email</span>
+      <label className="block space-y-2">
+        <span className={labelClass}>Sender email</span>
+        <input
+          type="email"
+          required
+          value={senderEmail}
+          onChange={(e) => setSenderEmail(e.target.value)}
+          placeholder={defaultSender || "you@gmail.com"}
+          className={inputClass}
+        />
+      </label>
+
+      <div className="grid gap-6 sm:grid-cols-2">
+        <div className="space-y-2">
+          <span className={labelClass}>CSV upload</span>
           <input
-            type="email"
-            required
-            value={senderEmail}
-            onChange={(e) => setSenderEmail(e.target.value)}
-            placeholder={defaultSender || "you@gmail.com"}
-            className={inputClass}
+            ref={csvInputRef}
+            type="file"
+            accept=".csv,text/csv"
+            onChange={(e) => setCsvFile(e.target.files?.[0] ?? null)}
+            className="block w-full text-sm text-slate-400 file:mr-3 file:cursor-pointer file:rounded-lg file:border-0 file:bg-blue-600 file:px-3 file:py-2 file:text-sm file:font-medium file:text-white hover:file:bg-blue-500"
           />
-        </label>
-        <label className="block space-y-2 sm:col-span-2">
-          <span className={labelClass}>Subject</span>
+          {csvFile && (
+            <div className="flex flex-wrap items-center gap-2 rounded-lg border border-blue-900/45 bg-blue-950/30 px-3 py-2 text-xs text-slate-300">
+              <span className="min-w-0 flex-1 truncate font-mono text-slate-200" title={csvFile.name}>
+                {csvFile.name}
+              </span>
+              <span className="shrink-0 text-slate-500">
+                {Math.max(1, Math.round(csvFile.size / 1024))} KB
+              </span>
+              <button
+                type="button"
+                onClick={clearCsv}
+                className="shrink-0 rounded-md border border-red-900/50 bg-red-950/40 px-2 py-1 text-[11px] font-medium text-red-200 hover:bg-red-950/60"
+              >
+                Remove
+              </button>
+            </div>
+          )}
+          <p className="text-xs leading-relaxed text-slate-500">
+            Uses an <code className="rounded bg-blue-950/80 px-1 py-0.5 text-blue-200/90">email</code>{" "}
+            column if present; otherwise the first column.
+          </p>
+        </div>
+        <div className="space-y-2">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <span className={labelClass}>Attachments</span>
+            {files.length > 0 && (
+              <button
+                type="button"
+                onClick={clearAllAttachments}
+                className="text-xs font-medium text-red-300/90 underline-offset-2 hover:text-red-200 hover:underline"
+              >
+                Remove all
+              </button>
+            )}
+          </div>
           <input
-            type="text"
-            required
-            value={subject}
-            onChange={(e) => setSubject(e.target.value)}
-            className={inputClass}
-            placeholder="Email subject"
+            ref={attachmentsInputRef}
+            type="file"
+            multiple
+            onChange={(e) => setFiles(Array.from(e.target.files ?? []))}
+            className="block w-full text-sm text-slate-400 file:mr-3 file:cursor-pointer file:rounded-lg file:border-0 file:bg-blue-600 file:px-3 file:py-2 file:text-sm file:font-medium file:text-white hover:file:bg-blue-500"
           />
-        </label>
+          {files.length > 0 && (
+            <ul className="space-y-1.5 text-xs text-slate-400">
+              {files.map((f, i) => (
+                <li
+                  key={`${f.name}-${f.size}-${i}`}
+                  className="flex items-center gap-2 rounded-lg border border-blue-900/40 bg-blue-950/25 py-1.5 pl-2 pr-1"
+                >
+                  <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-blue-400" />
+                  <span className="min-w-0 flex-1 truncate font-mono text-slate-300" title={f.name}>
+                    {f.name}
+                  </span>
+                  <span className="shrink-0 text-slate-500">
+                    {Math.max(1, Math.round(f.size / 1024))} KB
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => removeAttachment(i)}
+                    className="shrink-0 rounded-md border border-red-900/45 bg-red-950/35 px-2 py-1 text-[11px] font-medium text-red-200 hover:bg-red-950/55"
+                  >
+                    Remove
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
       </div>
+
+      <label className="block space-y-2">
+        <span className={labelClass}>Subject</span>
+        <input
+          type="text"
+          required
+          value={subject}
+          onChange={(e) => setSubject(e.target.value)}
+          className={inputClass}
+          placeholder="Email subject"
+        />
+      </label>
 
       <div className="space-y-2">
         <span className={labelClass}>Message</span>
@@ -238,40 +339,6 @@ export function ComposerForm() {
             . <span className="text-slate-600">Do not paste the message HTML here — only recipient addresses.</span>
           </p>
         </label>
-        <div className="grid gap-6 sm:grid-cols-2">
-          <label className="block space-y-2">
-            <span className={labelClass}>CSV upload</span>
-            <input
-              type="file"
-              accept=".csv,text/csv"
-              onChange={(e) => setCsvFile(e.target.files?.[0] ?? null)}
-              className="block w-full text-sm text-slate-400 file:mr-3 file:cursor-pointer file:rounded-lg file:border-0 file:bg-blue-600 file:px-3 file:py-2 file:text-sm file:font-medium file:text-white hover:file:bg-blue-500"
-            />
-            <p className="text-xs leading-relaxed text-slate-500">
-              Uses an <code className="rounded bg-blue-950/80 px-1 py-0.5 text-blue-200/90">email</code>{" "}
-              column if present; otherwise the first column.
-            </p>
-          </label>
-          <label className="block space-y-2">
-            <span className={labelClass}>Attachments</span>
-            <input
-              type="file"
-              multiple
-              onChange={(e) => setFiles(Array.from(e.target.files ?? []))}
-              className="block w-full text-sm text-slate-400 file:mr-3 file:cursor-pointer file:rounded-lg file:border-0 file:bg-blue-600 file:px-3 file:py-2 file:text-sm file:font-medium file:text-white hover:file:bg-blue-500"
-            />
-            {files.length > 0 && (
-              <ul className="space-y-1 text-xs text-slate-500">
-                {files.map((f) => (
-                  <li key={f.name + f.size} className="flex items-center gap-2">
-                    <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-blue-400" />
-                    {f.name} ({Math.round(f.size / 1024)} KB)
-                  </li>
-                ))}
-              </ul>
-            )}
-          </label>
-        </div>
       </div>
 
       <fieldset className="space-y-3 rounded-xl border border-blue-900/50 bg-blue-950/20 p-4 sm:space-y-4 sm:p-5">
