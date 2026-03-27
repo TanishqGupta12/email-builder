@@ -3,7 +3,6 @@ import { envMessageToHtml } from "@/lib/env-message-html";
 
 export async function GET() {
   const messageRaw = process.env.MESSAGE;
-  console.log("messageRaw", messageRaw);
   const defaultMessageHtml = envMessageToHtml(messageRaw);
 
   return NextResponse.json({

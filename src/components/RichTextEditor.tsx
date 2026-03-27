@@ -9,12 +9,15 @@ type Props = {
   value: string;
   onChange: (html: string) => void;
   placeholder?: string;
+  /** When incremented (e.g. after /api/config loads default MESSAGE), editor remounts with current `value`. */
+  bootKey?: number;
 };
 
 export function RichTextEditor({
   value,
   onChange,
   placeholder = "Write your message…",
+  bootKey = 0,
 }: Props) {
   const editor = useEditor({
     extensions: [
@@ -46,9 +49,9 @@ export function RichTextEditor({
     onUpdate: ({ editor: ed }) => {
       onChange(ed.getHTML());
     },
-  });
-console.log("value", value);
-
+  }, [bootKey]);
+  console.log("value", value);
+  
   const setLink = () => {
     if (!editor) return;
     const prev = editor.getAttributes("link").href as string | undefined;

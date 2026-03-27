@@ -48,6 +48,9 @@ export function ComposerForm() {
   const csvInputRef = useRef<HTMLInputElement>(null);
   const attachmentsInputRef = useRef<HTMLInputElement>(null);
   const submitLockRef = useRef(false);
+  /** Bump when default MESSAGE from /api/config replaces empty body so TipTap remounts with real HTML. */
+  const [richTextBootKey, setRichTextBootKey] = useState(0);
+  const pendingRichTextRemount = useRef(false);
 
   const clearCsv = useCallback(() => {
     setCsvFile(null);
@@ -125,13 +128,23 @@ export function ComposerForm() {
                 prev === "<p></p>" ||
                 prev === "<p><br></p>" ||
                 !prev.replace(/<[^>]*>/g, "").trim();
-              return empty ? msg : prev;
+              if (empty) {
+                pendingRichTextRemount.current = true;
+                return msg;
+              }
+              return prev;
             });
           }
         },
       )
       .catch(() => {});
   }, []);
+
+  useEffect(() => {
+    if (!pendingRichTextRemount.current) return;
+    pendingRichTextRemount.current = false;
+    setRichTextBootKey((k) => k + 1);
+  }, [bodyHtml]);
 
   const pollCampaign = useCallback(async (id: string) => {
     try {
@@ -312,7 +325,7 @@ export function ComposerForm() {
 
       <div className="space-y-2">
         <span className={labelClass}>Message</span>
-        <RichTextEditor value={bodyHtml} onChange={setBodyHtml} />
+        <RichTextEditor bootKey={richTextBootKey} value={bodyHtml} onChange={setBodyHtml} />
       </div>
 
       <div className="space-y-6">
