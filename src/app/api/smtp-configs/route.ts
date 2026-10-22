@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import {
   createSmtpConfig,
   listSmtpConfigs,
+  updateSmtpConfig,
   type SmtpEncryption,
 } from "@/lib/smtp-config-store";
 
@@ -44,6 +45,27 @@ export async function POST(req: Request) {
   }
   if (!encryption) {
     return NextResponse.json({ error: "Encryption must be tls, ssl, or none." }, { status: 400 });
+  }
+
+  const existing = (await listSmtpConfigs())[0];
+  if (existing) {
+    const updated = await updateSmtpConfig(existing.id, {
+      name: host,
+      host,
+      port,
+      username,
+      password,
+      encryption,
+      active: true,
+      isDefault: true,
+    });
+    if (!updated) {
+      return NextResponse.json({ error: "Update failed" }, { status: 500 });
+    }
+    const { password: _, ...safe } = updated;
+    return NextResponse.json({
+      config: { ...safe, passwordSet: password.length > 0 || existing.passwordSet },
+    });
   }
 
   const rec = await createSmtpConfig({

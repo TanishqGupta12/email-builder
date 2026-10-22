@@ -1,27 +1,35 @@
 import type { Metadata, Viewport } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
+import { IBM_Plex_Mono, IBM_Plex_Sans, Outfit } from "next/font/google";
 import "./globals.css";
 
-const geistSans = Geist({
-  variable: "--font-geist-sans",
+const display = Outfit({
+  variable: "--font-display",
   subsets: ["latin"],
+  weight: ["500", "600", "700"],
 });
 
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
+const body = IBM_Plex_Sans({
+  variable: "--font-body",
   subsets: ["latin"],
+  weight: ["400", "500", "600", "700"],
+});
+
+const mono = IBM_Plex_Mono({
+  variable: "--font-mono",
+  subsets: ["latin"],
+  weight: ["400", "500"],
 });
 
 export const metadata: Metadata = {
-  title: "Bulk email · Gmail SMTP",
-  description: "Send bulk email with Gmail SMTP",
+  title: "Postline · Email builder",
+  description: "Compose and send bulk email through your SMTP account",
 };
 
 export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
   viewportFit: "cover",
-  themeColor: "#050a12",
+  themeColor: "#f3f6f9",
 };
 
 export default function RootLayout({
@@ -32,9 +40,9 @@ export default function RootLayout({
   return (
     <html
       lang="en"
-      className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
+      className={`${display.variable} ${body.variable} ${mono.variable} h-full antialiased`}
     >
-      <body className="app-shell min-h-full overflow-x-hidden text-slate-200 [padding-bottom:env(safe-area-inset-bottom)]">
+      <body className="app-shell min-h-full overflow-x-hidden [padding-bottom:env(safe-area-inset-bottom)]">
         {children}
       </body>
     </html>

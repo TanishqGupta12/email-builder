@@ -14,5 +14,10 @@ export async function GET(_req: Request, context: Params) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
-  return NextResponse.json({ campaign });
+  return NextResponse.json({
+    campaign: {
+      ...campaign,
+      attachments: campaign.attachments.map(({ path: _path, ...rest }) => rest),
+    },
+  });
 }

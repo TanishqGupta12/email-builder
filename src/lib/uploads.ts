@@ -1,13 +1,12 @@
 import { randomUUID } from "crypto";
-import { mkdir, writeFile } from "fs/promises";
-import os from "os";
+import { access, mkdir, readFile, writeFile } from "fs/promises";
 import path from "path";
 
 const MAX_BYTES = 10 * 1024 * 1024;
 
-/** Writable on serverless (e.g. Vercel). `process.cwd()` under `/var/task` is read-only there. */
-function uploadsRoot(): string {
-  return path.join(os.tmpdir(), "email-builder-uploads");
+/** Persistent on local runs; blocked on Vercel (ephemeral disk). */
+export function uploadsRoot(): string {
+  return path.join(process.cwd(), "data", "uploads");
 }
 
 export async function saveAttachment(
@@ -20,6 +19,11 @@ export async function saveAttachment(
   size: number;
   path: string;
 }> {
+  if (process.env.VERCEL) {
+    throw new Error(
+      "File attachments are not supported on Vercel. Send without attachments, or run locally.",
+    );
+  }
   if (file.size > MAX_BYTES) {
     throw new Error(`File "${file.name}" exceeds ${MAX_BYTES / 1024 / 1024}MB limit.`);
   }
@@ -37,4 +41,24 @@ export async function saveAttachment(
     size: file.size,
     path: fullPath,
   };
+}
+
+/** Ensure the stored path belongs to this campaign under the uploads root. */
+export function isSafeAttachmentPath(campaignId: string, filePath: string): boolean {
+  const root = path.resolve(uploadsRoot(), campaignId);
+  const resolved = path.resolve(filePath);
+  return resolved === root || resolved.startsWith(root + path.sep);
+}
+
+export async function readStoredAttachment(
+  campaignId: string,
+  filePath: string,
+): Promise<Buffer | null> {
+  if (!isSafeAttachmentPath(campaignId, filePath)) return null;
+  try {
+    await access(filePath);
+    return await readFile(filePath);
+  } catch {
+    return null;
+  }
 }

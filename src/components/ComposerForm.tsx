@@ -3,24 +3,19 @@
 import dynamic from "next/dynamic";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
-import { plainTextToEmailHtml } from "@/lib/env-message-html";
 import {
   extractEmailsFromPaste,
   parseEmailPaste,
   partitionEmails,
 } from "@/lib/recipients";
-import type { RichTextEditorHandle } from "@/components/RichTextEditor";
-import { CustomMergeFieldsPanel } from "@/components/CustomMergeFieldsPanel";
-import { DynamicPlaceholdersPanel } from "@/components/DynamicPlaceholdersPanel";
-import { ReferralTemplatePicker } from "@/components/ReferralTemplatePicker";
+import type { CampaignReusePayload } from "@/components/CampaignDetailModal";
+import { COMPOSER_REUSE_KEY } from "@/lib/composer-reuse";
 
 const RichTextEditor = dynamic(
   () => import("@/components/RichTextEditor").then((m) => m.RichTextEditor),
   {
     ssr: false,
-    loading: () => (
-      <div className="min-h-[260px] animate-pulse rounded-xl border border-blue-900/50 bg-slate-950/50" />
-    ),
+    loading: () => <div className="min-h-[240px] animate-pulse rounded-[0.85rem] bg-[#eef2f6]" />,
   },
 );
 
@@ -29,10 +24,6 @@ type CampaignDetail = {
   status: string;
   recipients: { email: string; status: string; errorMessage: string | null }[];
 };
-
-const labelClass = "text-sm font-medium text-slate-200";
-const inputClass =
-  "app-input w-full px-3 py-2.5 text-sm placeholder:text-slate-500";
 
 export function ComposerForm() {
   const [defaultSender, setDefaultSender] = useState("");
@@ -50,14 +41,11 @@ export function ComposerForm() {
   const [lastCampaignId, setLastCampaignId] = useState<string | null>(null);
   const [liveCampaign, setLiveCampaign] = useState<CampaignDetail | null>(null);
   const recipientsRef = useRef<HTMLTextAreaElement>(null);
-  const subjectInputRef = useRef<HTMLInputElement>(null);
-  const messageEditorRef = useRef<RichTextEditorHandle>(null);
   const csvInputRef = useRef<HTMLInputElement>(null);
   const attachmentsInputRef = useRef<HTMLInputElement>(null);
-  const submitLockRef = useRef(false);
-  /** Bump when default MESSAGE from /api/config replaces empty body so TipTap remounts with real HTML. */
   const [richTextBootKey, setRichTextBootKey] = useState(0);
   const pendingRichTextRemount = useRef(false);
+  const [reuseNotice, setReuseNotice] = useState<string | null>(null);
 
   const clearCsv = useCallback(() => {
     setCsvFile(null);
@@ -153,47 +141,84 @@ export function ComposerForm() {
     setRichTextBootKey((k) => k + 1);
   }, [bodyHtml]);
 
-  const applyReferralTemplate = useCallback(
-    ({ subject: nextSubject, bodyPlain }: { subject: string; bodyPlain: string }) => {
-      const html = plainTextToEmailHtml(bodyPlain);
-      setSubject(nextSubject);
-      setBodyHtml(html);
+  const applyReuse = useCallback(
+    async (detail: CampaignReusePayload) => {
+      setError(null);
+      setReuseNotice(null);
+      setSenderEmail(detail.senderEmail);
+      setSubject(detail.subject);
+      setBodyHtml(detail.bodyHtml || "<p></p>");
       pendingRichTextRemount.current = true;
+      setRichTextBootKey((k) => k + 1);
+      clearCsv();
+      clearAllAttachments();
+
+      if (detail.attachments.length === 0) {
+        setReuseNotice("Loaded previous subject and message. Add recipients, then send.");
+        return;
+      }
+
+      const loaded: File[] = [];
+      let missing = 0;
+      for (const att of detail.attachments) {
+        try {
+          const res = await fetch(
+            `/api/campaigns/${detail.campaignId}/attachments/${att.id}`,
+          );
+          if (!res.ok) {
+            missing += 1;
+            continue;
+          }
+          const blob = await res.blob();
+          loaded.push(
+            new File([blob], att.originalName, {
+              type: att.mimeType || blob.type || "application/octet-stream",
+            }),
+          );
+        } catch {
+          missing += 1;
+        }
+      }
+
+      setFiles(loaded);
+      if (missing > 0 && loaded.length === 0) {
+        setReuseNotice(
+          "Loaded subject and message. Attachments were not found on disk — re-attach them if needed.",
+        );
+      } else if (missing > 0) {
+        setReuseNotice(
+          `Loaded subject, message, and ${loaded.length} attachment(s). ${missing} file(s) were missing.`,
+        );
+      } else {
+        setReuseNotice(
+          `Loaded previous subject, message, and ${loaded.length} attachment(s). Add recipients, then send.`,
+        );
+      }
     },
-    [],
+    [clearAllAttachments, clearCsv],
   );
 
-  const applyDynamicPlaceholders = useCallback(
-    ({ subject: s, bodyHtml: h }: { subject: string; bodyHtml: string }) => {
-      setSubject(s);
-      setBodyHtml(h);
-      pendingRichTextRemount.current = true;
-    },
-    [],
-  );
-
-  const insertTokenInSubject = useCallback((token: string) => {
-    const el = subjectInputRef.current;
-    if (el) {
-      const start = el.selectionStart ?? 0;
-      const end = el.selectionEnd ?? 0;
-      setSubject((prev) => {
-        const next = prev.slice(0, start) + token + prev.slice(end);
-        queueMicrotask(() => {
-          el.focus();
-          const pos = start + token.length;
-          el.setSelectionRange(pos, pos);
-        });
-        return next;
-      });
-    } else {
-      setSubject((s) => s + (s.length ? " " : "") + token);
+  useEffect(() => {
+    try {
+      const raw = sessionStorage.getItem(COMPOSER_REUSE_KEY);
+      if (raw) {
+        sessionStorage.removeItem(COMPOSER_REUSE_KEY);
+        const detail = JSON.parse(raw) as CampaignReusePayload;
+        void applyReuse(detail);
+      }
+    } catch {
+      /* ignore */
     }
-  }, []);
 
-  const insertTokenInMessage = useCallback((token: string) => {
-    messageEditorRef.current?.insertAtCursor(token);
-  }, []);
+    const onReuse = (event: Event) => {
+      const detail = (event as CustomEvent<CampaignReusePayload>).detail;
+      if (!detail) return;
+      void applyReuse(detail);
+    };
+
+    window.addEventListener("composer:reuse", onReuse);
+    return () => window.removeEventListener("composer:reuse", onReuse);
+  }, [applyReuse]);
 
   const pollCampaign = useCallback(async (id: string) => {
     try {
@@ -213,6 +238,7 @@ export function ComposerForm() {
       const c = await pollCampaign(lastCampaignId);
       if (cancelled || !c) return;
       setLiveCampaign(c);
+      window.dispatchEvent(new Event("campaigns:refresh"));
       if (c.status === "SENDING" || c.status === "QUEUED") {
         setTimeout(tick, 1500);
       }
@@ -225,7 +251,9 @@ export function ComposerForm() {
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
+    if (submitting) return;
     setError(null);
+    setReuseNotice(null);
     setInvalidList([]);
     setSubmitting(true);
     setLiveCampaign(null);
@@ -253,253 +281,219 @@ export function ComposerForm() {
       }
 
       setLastCampaignId(data.id);
+      window.dispatchEvent(new Event("campaigns:refresh"));
       if (Array.isArray(data.invalid) && data.invalid.length) {
         setInvalidList(data.invalid);
       }
     } catch {
       setError("Network error");
     } finally {
-      submitLockRef.current = false;
       setSubmitting(false);
     }
   }
 
   return (
     <>
-    {liveCampaign && <CampaignStatusPanel campaign={liveCampaign} />}
-    <form onSubmit={onSubmit} className="min-w-0 space-y-5 sm:space-y-6">
-      <label className="block space-y-2">
-        <span className={labelClass}>Sender email</span>
-        <input
-          type="email"
-          required
-          value={senderEmail}
-          onChange={(e) => setSenderEmail(e.target.value)}
-          placeholder={defaultSender || "you@gmail.com"}
-          className={inputClass}
-        />
-      </label>
+      {liveCampaign && <CampaignStatusPanel campaign={liveCampaign} />}
+      <form onSubmit={onSubmit} className="min-w-0 space-y-6">
+        {reuseNotice && <div className="ui-alert ui-alert-ok">{reuseNotice}</div>}
 
-      <div className="grid gap-6 sm:grid-cols-2">
-        <div className="space-y-2">
-          <span className={labelClass}>CSV upload</span>
-          <input
-            ref={csvInputRef}
-            type="file"
-            accept=".csv,text/csv"
-            onChange={(e) => setCsvFile(e.target.files?.[0] ?? null)}
-            className="block w-full text-sm text-slate-400 file:mr-3 file:cursor-pointer file:rounded-lg file:border-0 file:bg-blue-600 file:px-3 file:py-2 file:text-sm file:font-medium file:text-white hover:file:bg-blue-500"
-          />
-          {csvFile && (
-            <div className="flex flex-wrap items-center gap-2 rounded-lg border border-blue-900/45 bg-blue-950/30 px-3 py-2 text-xs text-slate-300">
-              <span className="min-w-0 flex-1 truncate font-mono text-slate-200" title={csvFile.name}>
-                {csvFile.name}
-              </span>
-              <span className="shrink-0 text-slate-500">
-                {Math.max(1, Math.round(csvFile.size / 1024))} KB
-              </span>
-              <button
-                type="button"
-                onClick={clearCsv}
-                className="shrink-0 rounded-md border border-red-900/50 bg-red-950/40 px-2 py-1 text-[11px] font-medium text-red-200 hover:bg-red-950/60"
-              >
-                Remove
-              </button>
-            </div>
-          )}
-          <p className="text-xs leading-relaxed text-slate-500">
-            Uses an <code className="rounded bg-blue-950/80 px-1 py-0.5 text-blue-200/90">email</code>{" "}
-            column if present; otherwise the first column.
-          </p>
+        <div className="grid gap-5 sm:grid-cols-2">
+          <label className="block min-w-0">
+            <span className="ui-label">From</span>
+            <input
+              type="email"
+              required
+              value={senderEmail}
+              onChange={(e) => setSenderEmail(e.target.value)}
+              placeholder={defaultSender || "you@gmail.com"}
+              className="app-input"
+            />
+          </label>
+          <label className="block min-w-0">
+            <span className="ui-label">Subject</span>
+            <input
+              type="text"
+              required
+              value={subject}
+              onChange={(e) => setSubject(e.target.value)}
+              className="app-input"
+              placeholder="What is this about?"
+            />
+          </label>
         </div>
-        <div className="space-y-2">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <span className={labelClass}>Attachments</span>
-            {files.length > 0 && (
-              <button
-                type="button"
-                onClick={clearAllAttachments}
-                className="text-xs font-medium text-red-300/90 underline-offset-2 hover:text-red-200 hover:underline"
-              >
-                Remove all
-              </button>
-            )}
-          </div>
-          <input
-            ref={attachmentsInputRef}
-            type="file"
-            multiple
-            onChange={(e) => setFiles(Array.from(e.target.files ?? []))}
-            className="block w-full text-sm text-slate-400 file:mr-3 file:cursor-pointer file:rounded-lg file:border-0 file:bg-blue-600 file:px-3 file:py-2 file:text-sm file:font-medium file:text-white hover:file:bg-blue-500"
-          />
-          {files.length > 0 && (
-            <ul className="space-y-1.5 text-xs text-slate-400">
-              {files.map((f, i) => (
-                <li
-                  key={`${f.name}-${f.size}-${i}`}
-                  className="flex items-center gap-2 rounded-lg border border-blue-900/40 bg-blue-950/25 py-1.5 pl-2 pr-1"
-                >
-                  <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-blue-400" />
-                  <span className="min-w-0 flex-1 truncate font-mono text-slate-300" title={f.name}>
-                    {f.name}
-                  </span>
-                  <span className="shrink-0 text-slate-500">
-                    {Math.max(1, Math.round(f.size / 1024))} KB
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => removeAttachment(i)}
-                    className="shrink-0 rounded-md border border-red-900/45 bg-red-950/35 px-2 py-1 text-[11px] font-medium text-red-200 hover:bg-red-950/55"
-                  >
-                    Remove
-                  </button>
-                </li>
-              ))}
-            </ul>
-          )}
+
+        <div>
+          <span className="ui-label">Message</span>
+          <RichTextEditor bootKey={richTextBootKey} value={bodyHtml} onChange={setBodyHtml} />
         </div>
-      </div>
 
-      <ReferralTemplatePicker onApply={applyReferralTemplate} />
-
-      <CustomMergeFieldsPanel
-        onInsertSubject={insertTokenInSubject}
-        onInsertMessage={insertTokenInMessage}
-      />
-
-      <label className="block space-y-2">
-        <span className={labelClass}>Subject</span>
-        <input
-          ref={subjectInputRef}
-          type="text"
-          required
-          value={subject}
-          onChange={(e) => setSubject(e.target.value)}
-          className={inputClass}
-          placeholder="Email subject"
-        />
-      </label>
-
-      <DynamicPlaceholdersPanel
-        subject={subject}
-        bodyHtml={bodyHtml}
-        onApply={applyDynamicPlaceholders}
-      />
-
-      <div className="space-y-2">
-        <span className={labelClass}>Message</span>
-        <RichTextEditor
-          ref={messageEditorRef}
-          bootKey={richTextBootKey}
-          value={bodyHtml}
-          onChange={setBodyHtml}
-        />
-      </div>
-
-      <div className="space-y-6">
-        <label className="block space-y-2">
-          <span className={labelClass}>Recipients (paste)</span>
+        <label className="block">
+          <span className="ui-label">Recipients</span>
           <textarea
             ref={recipientsRef}
             value={recipientsText}
             onChange={(e) => setRecipientsText(e.target.value)}
             onPaste={handleRecipientsPaste}
-            rows={6}
-            placeholder={"Paste any mix: commas, spaces, or lines — they separate automatically"}
-            className={`${inputClass} resize-y font-mono text-xs leading-relaxed`}
+            rows={5}
+            placeholder="Paste emails — commas, spaces, or one per line"
+            className="app-input resize-y font-mono text-xs leading-relaxed"
           />
-          <p className="text-xs leading-relaxed text-slate-500">
-            <span className="font-medium text-slate-400">{pasteRecipientCount}</span> valid address
-            {pasteRecipientCount === 1 ? "" : "es"} in the box above
-            {csvFile ? (
-              <span className="text-amber-200/90">
-                {" "}
-                · CSV attached — those emails are added too when you send
-              </span>
-            ) : null}
-            . <span className="text-slate-600">Do not paste the message HTML here — only recipient addresses.</span>
+          <p className="ui-hint">
+            <strong className="font-semibold text-[var(--color-ink)]">{pasteRecipientCount}</strong>{" "}
+            valid address{pasteRecipientCount === 1 ? "" : "es"}
+            {csvFile ? " · CSV emails are merged on send" : ""}
           </p>
         </label>
-      </div>
 
-      <fieldset className="space-y-3 rounded-xl border border-blue-900/50 bg-blue-950/20 p-4 sm:space-y-4 sm:p-5">
-        <legend className="px-1 text-sm font-semibold text-slate-100">Sending</legend>
-        <p className="text-xs leading-relaxed text-slate-500">
-          Recipients are emailed <strong className="text-slate-400">one by one</strong> in list order
-          (separate SMTP message per address). A short gap is added between sends so Gmail is less
-          likely to throttle.
-        </p>
-        <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:gap-6">
-          <label className="flex min-w-0 cursor-pointer items-start gap-2.5 text-sm text-slate-200 sm:items-center">
-            <input
-              type="radio"
-              name="sendMode"
-              checked={sendMode === "instant"}
-              onChange={() => setSendMode("instant")}
-              className="h-4 w-4 border-blue-500/50 bg-slate-900 text-blue-600 focus:ring-blue-500"
-            />
-            Default gap (~0.4s between each)
-          </label>
-          <label className="flex min-w-0 cursor-pointer items-start gap-2.5 text-sm text-slate-200 sm:items-center">
-            <input
-              type="radio"
-              name="sendMode"
-              checked={sendMode === "delayed"}
-              onChange={() => setSendMode("delayed")}
-              className="h-4 w-4 border-blue-500/50 bg-slate-900 text-blue-600 focus:ring-blue-500"
-            />
-            Custom delay (rate limit)
-          </label>
+        <div className="grid gap-5 sm:grid-cols-2">
+          <div>
+            <span className="ui-label">CSV list (optional)</span>
+            <label className="ui-dropzone">
+              <input
+                ref={csvInputRef}
+                type="file"
+                accept=".csv,text/csv"
+                onChange={(e) => setCsvFile(e.target.files?.[0] ?? null)}
+              />
+              <span className="text-sm font-semibold text-[var(--color-ink)]">
+                {csvFile ? "Replace CSV" : "Drop CSV or click to browse"}
+              </span>
+              <span className="text-xs text-[var(--color-ink-muted)]">
+                Email column preferred, otherwise first column
+              </span>
+            </label>
+            {csvFile && (
+              <div className="mt-2 flex items-center gap-2 rounded-lg border border-[var(--color-line)] bg-white px-3 py-2 text-xs">
+                <span className="min-w-0 flex-1 truncate font-mono" title={csvFile.name}>
+                  {csvFile.name}
+                </span>
+                <button type="button" onClick={clearCsv} className="ui-btn ui-btn-ghost !px-2 !py-1 text-[11px]">
+                  Remove
+                </button>
+              </div>
+            )}
+          </div>
+
+          <div>
+            <div className="mb-1.5 flex items-center justify-between gap-2">
+              <span className="ui-label !mb-0">Attachments (optional)</span>
+              {files.length > 0 && (
+                <button
+                  type="button"
+                  onClick={clearAllAttachments}
+                  className="text-xs font-semibold text-[var(--color-danger)] hover:underline"
+                >
+                  Clear all
+                </button>
+              )}
+            </div>
+            <label className="ui-dropzone">
+              <input
+                ref={attachmentsInputRef}
+                type="file"
+                multiple
+                onChange={(e) => setFiles(Array.from(e.target.files ?? []))}
+              />
+              <span className="text-sm font-semibold text-[var(--color-ink)]">
+                {files.length ? "Add more files" : "Drop files or click to browse"}
+              </span>
+              <span className="text-xs text-[var(--color-ink-muted)]">
+                Local only — blocked on Vercel
+              </span>
+            </label>
+            {files.length > 0 && (
+              <ul className="mt-2 space-y-1.5">
+                {files.map((f, i) => (
+                  <li
+                    key={`${f.name}-${f.size}-${i}`}
+                    className="flex items-center gap-2 rounded-lg border border-[var(--color-line)] bg-white px-3 py-2 text-xs"
+                  >
+                    <span className="min-w-0 flex-1 truncate font-mono" title={f.name}>
+                      {f.name}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => removeAttachment(i)}
+                      className="ui-btn ui-btn-ghost !px-2 !py-1 text-[11px]"
+                    >
+                      Remove
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
         </div>
-        {sendMode === "delayed" && (
-          <label className="flex flex-col gap-2 text-sm text-slate-300 sm:flex-row sm:flex-wrap sm:items-center">
-            <span>Seconds between each email</span>
-            <input
-              type="number"
-              min={1}
-              max={3600}
-              value={delaySeconds}
-              onChange={(e) => setDelaySeconds(Number(e.target.value))}
-              className="app-input w-full max-w-[10rem] px-2 py-2 text-center tabular-nums sm:w-24 sm:py-1.5"
-            />
-          </label>
+
+        <div className="rounded-xl border border-[var(--color-line)] bg-[#f8fafc] p-4 sm:p-5">
+          <div className="mb-3 flex flex-wrap items-end justify-between gap-2">
+            <div>
+              <p className="text-sm font-semibold text-[var(--color-ink)]">Sending pace</p>
+              <p className="ui-hint !mt-1">One email at a time — slow down if Gmail rate-limits you.</p>
+            </div>
+          </div>
+          <div className="ui-segment max-w-md">
+            <button
+              type="button"
+              data-active={sendMode === "instant" ? "true" : "false"}
+              onClick={() => setSendMode("instant")}
+            >
+              Fast (~0.4s)
+            </button>
+            <button
+              type="button"
+              data-active={sendMode === "delayed" ? "true" : "false"}
+              onClick={() => setSendMode("delayed")}
+            >
+              Custom delay
+            </button>
+          </div>
+          {sendMode === "delayed" && (
+            <label className="mt-3 flex flex-col gap-2 text-sm text-[var(--color-ink-muted)] sm:flex-row sm:items-center">
+              <span>Seconds between emails</span>
+              <input
+                type="number"
+                min={1}
+                max={3600}
+                value={delaySeconds}
+                onChange={(e) => setDelaySeconds(Number(e.target.value))}
+                className="app-input w-full max-w-[8rem] text-center tabular-nums"
+              />
+            </label>
+          )}
+        </div>
+
+        {error && <div className="ui-alert ui-alert-error">{error}</div>}
+
+        {invalidList.length > 0 && (
+          <div className="ui-alert ui-alert-warn">
+            <p className="font-semibold">Invalid emails skipped</p>
+            <ul className="mt-2 list-inside list-disc space-y-0.5 font-mono text-xs">
+              {invalidList.slice(0, 30).map((x) => (
+                <li key={x}>{x}</li>
+              ))}
+              {invalidList.length > 30 && <li>…and {invalidList.length - 30} more</li>}
+            </ul>
+          </div>
         )}
-      </fieldset>
 
-      {error && (
-        <div className="rounded-xl border border-red-500/40 bg-red-950/40 px-4 py-3 text-sm text-red-100 shadow-inner">
-          {error}
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <p className="text-xs text-[var(--color-ink-muted)]">
+            Double-check recipients before you send.
+          </p>
+          <button type="submit" disabled={submitting} className="ui-btn ui-btn-primary w-full sm:w-auto">
+            {submitting ? (
+              <>
+                <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" />
+                Sending…
+              </>
+            ) : (
+              "Send campaign"
+            )}
+          </button>
         </div>
-      )}
-
-      {invalidList.length > 0 && (
-        <div className="rounded-xl border border-amber-500/35 bg-amber-950/30 px-4 py-3 text-sm text-amber-50">
-          <p className="font-semibold text-amber-200">Invalid emails (skipped)</p>
-          <ul className="mt-2 list-inside list-disc space-y-0.5 font-mono text-xs text-amber-100/90">
-            {invalidList.slice(0, 30).map((x) => (
-              <li key={x}>{x}</li>
-            ))}
-            {invalidList.length > 30 && <li>…and {invalidList.length - 30} more</li>}
-          </ul>
-        </div>
-      )}
-
-      <button
-        type="submit"
-        disabled={submitting}
-        className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-blue-600 to-blue-700 px-5 py-3 text-sm font-semibold text-white shadow-lg shadow-blue-950/50 transition hover:from-blue-500 hover:to-blue-600 disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto"
-      >
-        {submitting ? (
-          <>
-            <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" />
-            Sending…
-          </>
-        ) : (
-          "Send campaign"
-        )}
-      </button>
-
-    </form>
+      </form>
     </>
   );
 }
@@ -516,48 +510,32 @@ function CampaignStatusPanel({ campaign }: { campaign: CampaignDetail }) {
   const failed = counts.FAILED ?? 0;
   const pending = counts.PENDING ?? 0;
   const total = campaign.recipients.length;
+  const progress = total > 0 ? Math.round(((sent + failed) / total) * 100) : 0;
 
   return (
-    <div className="mb-5 min-w-0 rounded-xl border border-blue-900/50 bg-blue-950/30 p-4 shadow-inner sm:p-5">
+    <div className="mb-6 rounded-xl border border-[var(--color-line)] bg-[#f8fafc] p-4 sm:p-5">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <h3 className="text-sm font-semibold text-white">Campaign status</h3>
-        <span className="rounded-full border border-blue-700/50 bg-blue-950/80 px-3 py-0.5 text-[10px] font-bold uppercase tracking-widest text-blue-200">
-          {campaign.status}
-        </span>
+        <h3 className="font-display text-sm font-semibold text-[var(--color-ink)]">Live send</h3>
+        <span className="ui-chip">{campaign.status}</span>
       </div>
-      <p className="mt-2 min-w-0 text-xs leading-relaxed text-slate-400">
-        <strong className="text-slate-300">{total} recipient addresses</strong> in this send (from
-        Recipients + CSV). <strong className="text-slate-300">Pending</strong> = still queued;
-        <strong className="text-slate-300"> Sent</strong> = delivered. Your <em>sender</em> email is
-        separate — it does not add to these numbers.
+      <p className="mt-2 text-xs text-[var(--color-ink-muted)]">
+        {total} recipient{total === 1 ? "" : "s"} · {progress}% finished
       </p>
-      <p className="mt-2 text-xs leading-relaxed text-slate-500">
-        Sends go one-by-one; use custom delay if Gmail rate-limits you.
-      </p>
-      <div className="mt-4 grid grid-cols-3 gap-3 text-center">
-        <div className="rounded-lg border border-emerald-800/40 bg-emerald-950/35 px-2 py-3">
-          <div className="text-xl font-semibold tabular-nums text-emerald-400">{sent}</div>
-          <div className="text-[10px] font-semibold uppercase tracking-wider text-emerald-500/80">
-            Sent
-          </div>
-        </div>
-        <div className="rounded-lg border border-amber-800/40 bg-amber-950/30 px-2 py-3">
-          <div className="text-xl font-semibold tabular-nums text-amber-300">{pending}</div>
-          <div className="text-[10px] font-semibold uppercase tracking-wider text-amber-500/80">
-            Pending
-          </div>
-        </div>
-        <div className="rounded-lg border border-red-800/40 bg-red-950/35 px-2 py-3">
-          <div className="text-xl font-semibold tabular-nums text-red-400">{failed}</div>
-          <div className="text-[10px] font-semibold uppercase tracking-wider text-red-400/80">
-            Failed
-          </div>
-        </div>
+      <div className="mt-3 h-1.5 overflow-hidden rounded bg-[#e2e8f0]">
+        <div
+          className="h-full rounded bg-[var(--color-accent)] transition-[width] duration-500 ease-out"
+          style={{ width: `${progress}%` }}
+        />
+      </div>
+      <div className="mt-4 grid grid-cols-3 gap-2 text-center">
+        <Stat label="Sent" value={sent} tone="ok" />
+        <Stat label="Pending" value={pending} tone="warn" />
+        <Stat label="Failed" value={failed} tone="danger" />
       </div>
       {failed > 0 && (
-        <div className="mt-4 max-h-40 overflow-auto rounded-lg border border-red-900/40 bg-red-950/20 p-3 text-xs">
-          <p className="font-semibold text-red-400">SMTP / send errors</p>
-          <ul className="mt-2 space-y-1.5 font-mono text-red-100/90">
+        <div className="mt-4 max-h-36 overflow-auto rounded-lg border border-[#fecdca] bg-[#fef3f2] p-3 text-xs text-[#912018]">
+          <p className="font-semibold">Errors</p>
+          <ul className="mt-2 space-y-1 font-mono">
             {campaign.recipients
               .filter((r) => r.status === "FAILED")
               .map((r) => (
@@ -568,6 +546,31 @@ function CampaignStatusPanel({ campaign }: { campaign: CampaignDetail }) {
           </ul>
         </div>
       )}
+    </div>
+  );
+}
+
+function Stat({
+  label,
+  value,
+  tone,
+}: {
+  label: string;
+  value: number;
+  tone: "ok" | "warn" | "danger";
+}) {
+  const color =
+    tone === "ok"
+      ? "text-[var(--color-ok)]"
+      : tone === "warn"
+        ? "text-[var(--color-warn)]"
+        : "text-[var(--color-danger)]";
+  return (
+    <div className="rounded-lg border border-[var(--color-line)] bg-white py-2.5">
+      <div className={`text-xl font-semibold tabular-nums ${color}`}>{value}</div>
+      <div className="text-[10px] font-semibold uppercase tracking-wide text-[var(--color-ink-muted)]">
+        {label}
+      </div>
     </div>
   );
 }

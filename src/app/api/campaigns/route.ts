@@ -102,10 +102,15 @@ export async function POST(req: Request) {
   });
 
   const attachmentFiles = form.getAll("attachments");
-  for (const item of attachmentFiles) {
-    if (!(item instanceof File) || item.size === 0) continue;
-    const saved = await saveAttachment(campaign.id, item);
-    await addCampaignAttachment(campaign.id, saved);
+  try {
+    for (const item of attachmentFiles) {
+      if (!(item instanceof File) || item.size === 0) continue;
+      const saved = await saveAttachment(campaign.id, item);
+      await addCampaignAttachment(campaign.id, saved);
+    }
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    return NextResponse.json({ error: message, id: campaign.id }, { status: 400 });
   }
 
   after(async () => {
