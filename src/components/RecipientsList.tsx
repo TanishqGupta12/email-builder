@@ -60,39 +60,50 @@ export function RecipientsList() {
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [actionOk, setActionOk] = useState<string | null>(null);
+  const [qDraft, setQDraft] = useState("");
+  const [q, setQ] = useState("");
 
-  const load = useCallback(async (page = pagination.page, pageSize = pagination.pageSize) => {
-    try {
-      const res = await fetch(`/api/recipients?page=${page}&pageSize=${pageSize}`);
-      if (!res.ok) {
+  const load = useCallback(
+    async (page = pagination.page, pageSize = pagination.pageSize, query = q) => {
+      try {
+        const params = new URLSearchParams({
+          page: String(page),
+          pageSize: String(pageSize),
+        });
+        if (query.trim()) params.set("q", query.trim());
+        const res = await fetch(`/api/recipients?${params}`);
+        if (!res.ok) {
+          setLoadError(true);
+          setRows([]);
+          return;
+        }
+        const data = await res.json();
+        const mapped = data.recipients as RecipientRow[];
+        const p = data.pagination as Pagination;
+        setLoadError(false);
+        setRows(mapped);
+        setPagination({
+          page: p.page,
+          pageSize: p.pageSize,
+          total: p.total,
+          totalPages: p.totalPages,
+        });
+        setSelected((prev) => {
+          const emails = new Set(mapped.map((r) => r.email.toLowerCase()));
+          return new Set([...prev].filter((e) => emails.has(e.toLowerCase())));
+        });
+      } catch {
         setLoadError(true);
         setRows([]);
-        return;
       }
-      const data = await res.json();
-      const mapped = data.recipients as RecipientRow[];
-      const p = data.pagination as Pagination;
-      setLoadError(false);
-      setRows(mapped);
-      setPagination({
-        page: p.page,
-        pageSize: p.pageSize,
-        total: p.total,
-        totalPages: p.totalPages,
-      });
-      setSelected((prev) => {
-        const emails = new Set(mapped.map((r) => r.email.toLowerCase()));
-        return new Set([...prev].filter((e) => emails.has(e.toLowerCase())));
-      });
-    } catch {
-      setLoadError(true);
-      setRows([]);
-    }
-  }, [pagination.page, pagination.pageSize]);
+    },
+    [pagination.page, pagination.pageSize, q],
+  );
 
   useEffect(() => {
-    void load();
-  }, [load]);
+    void load(1, pagination.pageSize, q);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [q]);
 
   const allSelected = useMemo(
     () =>
@@ -249,6 +260,48 @@ export function RecipientsList() {
 
   return (
     <>
+      <div className="border-b border-[var(--color-line)] px-4 py-3 sm:px-5">
+        <form
+          className="flex flex-col gap-2 sm:flex-row sm:items-center"
+          onSubmit={(e) => {
+            e.preventDefault();
+            setQ(qDraft.trim());
+          }}
+        >
+          <input
+            className="app-input flex-1"
+            value={qDraft}
+            onChange={(e) => setQDraft(e.target.value)}
+            placeholder="Search by email, subject, or sender…"
+            aria-label="Search recipients"
+          />
+          <div className="flex gap-2">
+            <button type="submit" className="ui-btn ui-btn-primary" disabled={busy}>
+              Search
+            </button>
+            {q ? (
+              <button
+                type="button"
+                className="ui-btn ui-btn-ghost"
+                disabled={busy}
+                onClick={() => {
+                  setQDraft("");
+                  setQ("");
+                }}
+              >
+                Clear
+              </button>
+            ) : null}
+          </div>
+        </form>
+        {q ? (
+          <p className="mt-2 text-xs text-[var(--color-ink-muted)]">
+            Showing matches for “{q}” · {pagination.total} result
+            {pagination.total === 1 ? "" : "s"}
+          </p>
+        ) : null}
+      </div>
+
       <div className="flex flex-col gap-3 border-b border-[var(--color-line)] px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-5">
         <label className="flex items-center gap-2 text-xs font-medium text-[var(--color-ink)]">
           <input
@@ -293,10 +346,12 @@ export function RecipientsList() {
       {rows.length === 0 ? (
         <div className="px-4 py-12 text-center sm:px-6">
           <p className="font-display text-base font-semibold text-[var(--color-ink)]">
-            No recipients yet
+            {q ? "No matches" : "No recipients yet"}
           </p>
           <p className="mt-1 text-sm text-[var(--color-ink-muted)]">
-            Addresses you send to will appear here for reuse and follow-up.
+            {q
+              ? "Try another email, subject, or sender keyword."
+              : "Addresses you send to will appear here for reuse and follow-up."}
           </p>
         </div>
       ) : (
@@ -403,8 +458,8 @@ export function RecipientsList() {
         total={pagination.total}
         totalPages={pagination.totalPages}
         disabled={busy}
-        onPageChange={(page) => void load(page, pagination.pageSize)}
-        onPageSizeChange={(pageSize) => void load(1, pageSize)}
+        onPageChange={(page) => void load(page, pagination.pageSize, q)}
+        onPageSizeChange={(pageSize) => void load(1, pageSize, q)}
       />
 
       {viewId && (

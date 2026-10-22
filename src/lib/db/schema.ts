@@ -53,3 +53,44 @@ export const smtpConfigs = sqliteTable("smtp_configs", {
   createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
   updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
 });
+
+/** Local compose drafts (synced actions happen on send). */
+export const mailDrafts = sqliteTable("mail_drafts", {
+  id: text("id").primaryKey(),
+  accountEmail: text("account_email").notNull(),
+  toAddrs: text("to_addrs").notNull(),
+  ccAddrs: text("cc_addrs"),
+  subject: text("subject").notNull(),
+  bodyHtml: text("body_html").notNull(),
+  createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+  updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
+});
+
+/** Outbound messages waiting for a future send time. */
+export const mailScheduled = sqliteTable("mail_scheduled", {
+  id: text("id").primaryKey(),
+  accountEmail: text("account_email").notNull(),
+  toAddrs: text("to_addrs").notNull(),
+  ccAddrs: text("cc_addrs"),
+  subject: text("subject").notNull(),
+  bodyHtml: text("body_html").notNull(),
+  sendAt: integer("send_at", { mode: "timestamp_ms" }).notNull(),
+  status: text("status").$type<"PENDING" | "SENDING" | "SENT" | "CANCELLED" | "FAILED">().notNull(),
+  errorMessage: text("error_message"),
+  createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+  updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
+});
+
+/** Snoozed IMAP messages restored after wakeAt. */
+export const mailSnoozed = sqliteTable("mail_snoozed", {
+  id: text("id").primaryKey(),
+  accountEmail: text("account_email").notNull(),
+  mailbox: text("mailbox").notNull(),
+  uid: integer("uid").notNull(),
+  subject: text("subject").notNull(),
+  fromName: text("from_name").notNull(),
+  fromEmail: text("from_email").notNull(),
+  preview: text("preview").notNull(),
+  wakeAt: integer("wake_at", { mode: "timestamp_ms" }).notNull(),
+  createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+});

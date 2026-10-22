@@ -9,11 +9,13 @@ import { parsePageParams } from "@/lib/pagination";
 export const runtime = "nodejs";
 
 export async function GET(req: Request) {
-  const { page, pageSize } = parsePageParams(new URL(req.url).searchParams, {
+  const url = new URL(req.url);
+  const { page, pageSize } = parsePageParams(url.searchParams, {
     page: 1,
     pageSize: 10,
   });
-  const result = await listRecipientsPage(page, pageSize);
+  const q = url.searchParams.get("q")?.trim() || undefined;
+  const result = await listRecipientsPage(page, pageSize, q);
 
   return NextResponse.json({
     recipients: result.items.map((r) => ({

@@ -15,7 +15,8 @@ export default function ConnectionPage() {
             Connection
           </h1>
           <p className="mt-2 max-w-xl text-sm leading-relaxed text-[var(--color-ink-muted)] sm:text-base">
-            Configure the SMTP account used to send campaigns.
+            Configure the SMTP account used to send campaigns and power Mail (IMAP is derived
+            automatically, e.g. imap.gmail.com for Gmail).
           </p>
         </header>
         <div className="rise-in rise-in-delay-1">

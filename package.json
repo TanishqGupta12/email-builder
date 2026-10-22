@@ -21,6 +21,8 @@
     "@tiptap/starter-kit": "^3.20.6",
     "dotenv": "^17.3.1",
     "drizzle-orm": "^0.45.4",
+    "imapflow": "^2.9.1",
+    "mailparser": "^3.12.4",
     "next": "16.2.1",
     "nodemailer": "^8.0.4",
     "papaparse": "^5.5.3",
@@ -29,6 +31,7 @@
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
+    "@types/mailparser": "^3.9.0",
     "@types/node": "^20",
     "@types/nodemailer": "^7.0.11",
     "@types/papaparse": "^5.5.2",

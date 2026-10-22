@@ -572,6 +572,7 @@ export async function listRecipientDirectory(
 export async function listRecipientsPage(
   page: number,
   pageSize: number,
+  q?: string,
 ): Promise<RecipientsPage> {
   const safePageSize = Math.min(100, Math.max(1, Math.floor(pageSize) || 10));
   const safePage = Math.max(1, Math.floor(page) || 1);
@@ -593,7 +594,20 @@ export async function listRecipientsPage(
     .orderBy(desc(campaigns.createdAt))
     .all();
 
-  const all = buildRecipientDirectory(rows);
+  const needle = q?.trim().toLowerCase() ?? "";
+  let all = buildRecipientDirectory(rows);
+  if (needle) {
+    all = all.filter((entry) => {
+      if (entry.email.toLowerCase().includes(needle)) return true;
+      return entry.recentCampaigns.some(
+        (c) =>
+          c.subject.toLowerCase().includes(needle) ||
+          c.senderEmail.toLowerCase().includes(needle) ||
+          c.recipientStatus.toLowerCase().includes(needle),
+      );
+    });
+  }
+
   const total = all.length;
   const totalPages = Math.max(1, Math.ceil(total / safePageSize) || 1);
   const currentPage = Math.min(safePage, totalPages);

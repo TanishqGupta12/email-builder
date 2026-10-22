@@ -145,7 +145,9 @@ export function ComposerForm() {
     async (detail: CampaignReusePayload) => {
       setError(null);
       setReuseNotice(null);
-      setSenderEmail(detail.senderEmail);
+      if (detail.senderEmail?.trim()) {
+        setSenderEmail(detail.senderEmail);
+      }
       setSubject(detail.subject);
       setBodyHtml(detail.bodyHtml || "<p></p>");
       if (typeof detail.recipientsText === "string") {

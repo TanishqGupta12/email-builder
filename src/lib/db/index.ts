@@ -57,6 +57,50 @@ CREATE TABLE IF NOT EXISTS smtp_configs (
 CREATE INDEX IF NOT EXISTS recipients_campaign_id_idx ON recipients(campaign_id);
 CREATE INDEX IF NOT EXISTS attachments_campaign_id_idx ON attachments(campaign_id);
 CREATE INDEX IF NOT EXISTS campaigns_created_at_idx ON campaigns(created_at);
+
+CREATE TABLE IF NOT EXISTS mail_drafts (
+  id TEXT PRIMARY KEY,
+  account_email TEXT NOT NULL,
+  to_addrs TEXT NOT NULL,
+  cc_addrs TEXT,
+  subject TEXT NOT NULL,
+  body_html TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS mail_scheduled (
+  id TEXT PRIMARY KEY,
+  account_email TEXT NOT NULL,
+  to_addrs TEXT NOT NULL,
+  cc_addrs TEXT,
+  subject TEXT NOT NULL,
+  body_html TEXT NOT NULL,
+  send_at INTEGER NOT NULL,
+  status TEXT NOT NULL,
+  error_message TEXT,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS mail_snoozed (
+  id TEXT PRIMARY KEY,
+  account_email TEXT NOT NULL,
+  mailbox TEXT NOT NULL,
+  uid INTEGER NOT NULL,
+  subject TEXT NOT NULL,
+  from_name TEXT NOT NULL,
+  from_email TEXT NOT NULL,
+  preview TEXT NOT NULL,
+  wake_at INTEGER NOT NULL,
+  created_at INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS mail_drafts_account_idx ON mail_drafts(account_email);
+CREATE INDEX IF NOT EXISTS mail_scheduled_account_idx ON mail_scheduled(account_email);
+CREATE INDEX IF NOT EXISTS mail_scheduled_send_at_idx ON mail_scheduled(send_at);
+CREATE INDEX IF NOT EXISTS mail_snoozed_account_idx ON mail_snoozed(account_email);
+CREATE INDEX IF NOT EXISTS mail_snoozed_wake_at_idx ON mail_snoozed(wake_at);
 `;
 
 export type AppDatabase = LibSQLDatabase<typeof schema>;
