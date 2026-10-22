@@ -399,7 +399,7 @@ export function ComposerForm() {
                 {files.length ? "Add more files" : "Drop files or click to browse"}
               </span>
               <span className="text-xs text-[var(--color-ink-muted)]">
-                Local only — blocked on Vercel
+                Up to 10MB per file
               </span>
             </label>
             {files.length > 0 && (

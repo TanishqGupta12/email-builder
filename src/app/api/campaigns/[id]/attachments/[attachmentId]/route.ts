@@ -18,10 +18,10 @@ export async function GET(_req: Request, context: Params) {
     return NextResponse.json({ error: "Attachment not found" }, { status: 404 });
   }
 
-  const buf = await readStoredAttachment(id, attachment.path);
+  const buf = await readStoredAttachment(id, attachment.path, attachment.contentBase64);
   if (!buf) {
     return NextResponse.json(
-      { error: "Attachment file is no longer available on disk." },
+      { error: "Attachment file is no longer available." },
       { status: 404 },
     );
   }

@@ -23,6 +23,8 @@ export type Attachment = {
   mimeType: string;
   size: number;
   path: string;
+  /** Present when loaded for send/download; omitted from list queries. */
+  contentBase64?: string | null;
 };
 
 export type Campaign = {
@@ -74,6 +76,7 @@ function toAttachment(row: AttachmentRow): Attachment {
     mimeType: row.mimeType,
     size: row.size,
     path: row.path,
+    contentBase64: row.contentBase64 ?? null,
   };
 }
 
@@ -98,25 +101,53 @@ function toCampaign(
   };
 }
 
-async function rowsForCampaigns(ids: string[]): Promise<{
+async function rowsForCampaigns(
+  ids: string[],
+  opts: { includeContent?: boolean } = {},
+): Promise<{
   recipientRows: RecipientRow[];
   attachmentRows: AttachmentRow[];
 }> {
   if (ids.length === 0) return { recipientRows: [], attachmentRows: [] };
   const db = await getDb();
+  const recipientRows = await db
+    .select()
+    .from(recipients)
+    .where(inArray(recipients.campaignId, ids))
+    .orderBy(asc(sql`rowid`))
+    .all();
+
+  if (opts.includeContent) {
+    return {
+      recipientRows,
+      attachmentRows: await db
+        .select()
+        .from(attachments)
+        .where(inArray(attachments.campaignId, ids))
+        .orderBy(asc(sql`rowid`))
+        .all(),
+    };
+  }
+
+  // List views skip base64 payloads to keep responses small.
+  const meta = await db
+    .select({
+      id: attachments.id,
+      campaignId: attachments.campaignId,
+      filename: attachments.filename,
+      originalName: attachments.originalName,
+      mimeType: attachments.mimeType,
+      size: attachments.size,
+      path: attachments.path,
+    })
+    .from(attachments)
+    .where(inArray(attachments.campaignId, ids))
+    .orderBy(asc(sql`rowid`))
+    .all();
+
   return {
-    recipientRows: await db
-      .select()
-      .from(recipients)
-      .where(inArray(recipients.campaignId, ids))
-      .orderBy(asc(sql`rowid`))
-      .all(),
-    attachmentRows: await db
-      .select()
-      .from(attachments)
-      .where(inArray(attachments.campaignId, ids))
-      .orderBy(asc(sql`rowid`))
-      .all(),
+    recipientRows,
+    attachmentRows: meta.map((row) => ({ ...row, contentBase64: null })),
   };
 }
 
@@ -227,6 +258,7 @@ export async function addCampaignAttachment(
         mimeType: attachment.mimeType,
         size: attachment.size,
         path: attachment.path,
+        contentBase64: attachment.contentBase64 ?? null,
       })
       .run();
     await tx.update(campaigns).set({ updatedAt: now }).where(eq(campaigns.id, campaignId)).run();
@@ -234,11 +266,16 @@ export async function addCampaignAttachment(
   return attachment;
 }
 
-export async function getCampaign(id: string): Promise<Campaign | undefined> {
+export async function getCampaign(
+  id: string,
+  opts: { includeContent?: boolean } = { includeContent: true },
+): Promise<Campaign | undefined> {
   const db = await getDb();
   const row = await db.select().from(campaigns).where(eq(campaigns.id, id)).get();
   if (!row) return undefined;
-  const { recipientRows, attachmentRows } = await rowsForCampaigns([id]);
+  const { recipientRows, attachmentRows } = await rowsForCampaigns([id], {
+    includeContent: opts.includeContent !== false,
+  });
   return toCampaign(row, recipientRows, attachmentRows);
 }
 
@@ -251,7 +288,9 @@ export async function listRecentCampaigns(limit: number): Promise<Campaign[]> {
     .limit(limit)
     .all();
   const ids = rows.map((row) => row.id);
-  const { recipientRows, attachmentRows } = await rowsForCampaigns(ids);
+  const { recipientRows, attachmentRows } = await rowsForCampaigns(ids, {
+    includeContent: false,
+  });
   const recipientsByCampaign = groupByCampaign(recipientRows);
   const attachmentsByCampaign = groupByCampaign(attachmentRows);
   return rows.map((row) =>

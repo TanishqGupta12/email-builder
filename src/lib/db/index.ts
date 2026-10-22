@@ -35,7 +35,8 @@ CREATE TABLE IF NOT EXISTS attachments (
   original_name TEXT NOT NULL,
   mime_type TEXT NOT NULL,
   size INTEGER NOT NULL,
-  path TEXT NOT NULL
+  path TEXT NOT NULL,
+  content_base64 TEXT
 );
 
 CREATE TABLE IF NOT EXISTS smtp_configs (
@@ -96,7 +97,21 @@ async function openDatabase(): Promise<AppDatabase> {
     await client.execute("PRAGMA foreign_keys = ON");
   }
   await client.executeMultiple(SCHEMA_SQL);
+  await ensureAttachmentContentColumn(client);
   return drizzle(client, { schema });
+}
+
+async function ensureAttachmentContentColumn(
+  client: ReturnType<typeof createClient>,
+): Promise<void> {
+  const info = await client.execute("PRAGMA table_info(attachments)");
+  const hasContent = info.rows.some((row) => {
+    const name = (row as { name?: string }).name ?? row[1];
+    return name === "content_base64";
+  });
+  if (!hasContent) {
+    await client.execute("ALTER TABLE attachments ADD COLUMN content_base64 TEXT");
+  }
 }
 
 export function getDb(): Promise<AppDatabase> {

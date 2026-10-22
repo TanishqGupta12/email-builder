@@ -35,6 +35,8 @@ export const attachments = sqliteTable("attachments", {
   mimeType: text("mime_type").notNull(),
   size: integer("size").notNull(),
   path: text("path").notNull(),
+  /** Base64 file bytes — required for Vercel (no durable disk). */
+  contentBase64: text("content_base64"),
 });
 
 export const smtpConfigs = sqliteTable("smtp_configs", {

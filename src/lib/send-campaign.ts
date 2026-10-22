@@ -5,6 +5,7 @@ import {
   setCampaignStatus,
 } from "@/lib/campaign-store";
 import { getTransporter } from "@/lib/smtp";
+import { readStoredAttachment } from "@/lib/uploads";
 import type { Transporter } from "nodemailer";
 
 /** Space between messages when not using custom delay (keeps SMTP strictly one-by-one). */
@@ -52,10 +53,19 @@ export async function sendCampaignEmails(campaignId: string) {
       return;
     }
 
-    const mailAttachments = campaign.attachments.map((a) => ({
-      filename: a.originalName,
-      path: a.path,
-    }));
+    const mailAttachments: { filename: string; content: Buffer; contentType: string }[] = [];
+    for (const a of campaign.attachments) {
+      const content = await readStoredAttachment(campaignId, a.path, a.contentBase64);
+      if (!content) {
+        console.warn("[sendCampaignEmails] missing attachment bytes", a.id, a.originalName);
+        continue;
+      }
+      mailAttachments.push({
+        filename: a.originalName,
+        content,
+        contentType: a.mimeType,
+      });
+    }
 
     const betweenMs = delayBetweenMs(campaign);
     const { recipients } = campaign;
