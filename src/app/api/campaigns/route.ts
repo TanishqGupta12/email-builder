@@ -36,11 +36,13 @@ function countByStatus(
 }
 
 export async function GET(req: Request) {
-  const { page, pageSize } = parsePageParams(new URL(req.url).searchParams, {
+  const url = new URL(req.url);
+  const { page, pageSize } = parsePageParams(url.searchParams, {
     page: 1,
     pageSize: 10,
   });
-  const result = await listCampaignsPage(page, pageSize);
+  const q = url.searchParams.get("q")?.trim() || undefined;
+  const result = await listCampaignsPage(page, pageSize, q);
 
   const payload = result.items.map((c) => ({
     id: c.id,

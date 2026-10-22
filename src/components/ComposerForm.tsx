@@ -9,7 +9,17 @@ import {
   partitionEmails,
 } from "@/lib/recipients";
 import type { CampaignReusePayload } from "@/components/CampaignDetailModal";
+import { RecipientUsageModal } from "@/components/RecipientUsageModal";
 import { COMPOSER_REUSE_KEY } from "@/lib/composer-reuse";
+
+type PriorUseHit = {
+  email: string;
+  usedBefore: boolean;
+  sentCount: number;
+  failedCount: number;
+  lastActivityAt: string | null;
+  lastSubject: string | null;
+};
 
 const RichTextEditor = dynamic(
   () => import("@/components/RichTextEditor").then((m) => m.RichTextEditor),
@@ -46,6 +56,10 @@ export function ComposerForm() {
   const [richTextBootKey, setRichTextBootKey] = useState(0);
   const pendingRichTextRemount = useRef(false);
   const [reuseNotice, setReuseNotice] = useState<string | null>(null);
+  const [priorHits, setPriorHits] = useState<PriorUseHit[]>([]);
+  const [usageEmail, setUsageEmail] = useState<string | null>(null);
+  const [checkingUsage, setCheckingUsage] = useState(false);
+  const alertedEmailsRef = useRef<Set<string>>(new Set());
 
   const clearCsv = useCallback(() => {
     setCsvFile(null);
@@ -67,10 +81,63 @@ export function ComposerForm() {
     if (attachmentsInputRef.current) attachmentsInputRef.current.value = "";
   }, []);
 
-  const pasteRecipientCount = useMemo(() => {
+  const validRecipients = useMemo(() => {
     const { valid } = partitionEmails(parseEmailPaste(recipientsText));
-    return valid.length;
+    return valid;
   }, [recipientsText]);
+
+  const pasteRecipientCount = validRecipients.length;
+
+  const priorUsed = useMemo(
+    () => priorHits.filter((h) => h.usedBefore),
+    [priorHits],
+  );
+
+  useEffect(() => {
+    if (validRecipients.length === 0) {
+      setPriorHits([]);
+      return;
+    }
+
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      void (async () => {
+        setCheckingUsage(true);
+        try {
+          const res = await fetch("/api/recipients/usage", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ emails: validRecipients }),
+          });
+          const data = await res.json();
+          if (!res.ok || cancelled) return;
+          const results = (data.results as PriorUseHit[]) ?? [];
+          setPriorHits(results);
+
+          const newlyUsed = results.filter(
+            (r) =>
+              r.usedBefore &&
+              !alertedEmailsRef.current.has(r.email.trim().toLowerCase()),
+          );
+          if (newlyUsed.length > 0) {
+            for (const hit of newlyUsed) {
+              alertedEmailsRef.current.add(hit.email.trim().toLowerCase());
+            }
+            setUsageEmail(newlyUsed[0].email);
+          }
+        } catch {
+          if (!cancelled) setPriorHits([]);
+        } finally {
+          if (!cancelled) setCheckingUsage(false);
+        }
+      })();
+    }, 450);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [validRecipients]);
 
   const handleRecipientsPaste = useCallback(
     (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
@@ -341,8 +408,21 @@ export function ComposerForm() {
           <RichTextEditor bootKey={richTextBootKey} value={bodyHtml} onChange={setBodyHtml} />
         </div>
 
-        <label className="block">
-          <span className="ui-label">Recipients</span>
+        <div>
+          <div className="mb-1.5 flex flex-wrap items-center justify-between gap-2">
+            <span className="ui-label !mb-0">Recipients</span>
+            <button
+              type="button"
+              className="text-xs font-semibold text-[var(--color-accent)] hover:underline disabled:opacity-40"
+              disabled={validRecipients.length === 0 || checkingUsage}
+              onClick={() => {
+                if (priorUsed[0]) setUsageEmail(priorUsed[0].email);
+                else if (validRecipients[0]) setUsageEmail(validRecipients[0]);
+              }}
+            >
+              {checkingUsage ? "Checking…" : "Check usage history"}
+            </button>
+          </div>
           <textarea
             ref={recipientsRef}
             value={recipientsText}
@@ -357,7 +437,45 @@ export function ComposerForm() {
             valid address{pasteRecipientCount === 1 ? "" : "es"}
             {csvFile ? " · CSV emails are merged on send" : ""}
           </p>
-        </label>
+
+          {priorUsed.length > 0 && (
+            <div className="mt-3 rounded-xl border border-[var(--color-warn)]/35 bg-[#fff8eb] px-3.5 py-3">
+              <p className="text-sm font-semibold text-[var(--color-ink)]">
+                {priorUsed.length} address{priorUsed.length === 1 ? "" : "es"} used before
+              </p>
+              <p className="mt-0.5 text-xs text-[var(--color-ink-muted)]">
+                Open the timeline to see what was sent and when.
+              </p>
+              <ul className="mt-2.5 space-y-1.5">
+                {priorUsed.map((hit) => (
+                  <li key={hit.email}>
+                    <button
+                      type="button"
+                      className="flex w-full items-start justify-between gap-3 rounded-lg border border-[var(--color-line)] bg-white px-3 py-2 text-left transition hover:border-[var(--color-accent)]"
+                      onClick={() => setUsageEmail(hit.email)}
+                    >
+                      <span className="min-w-0">
+                        <span className="block truncate font-mono text-xs font-medium text-[var(--color-ink)]">
+                          {hit.email}
+                        </span>
+                        <span className="mt-0.5 block truncate text-[0.7rem] text-[var(--color-ink-muted)]">
+                          {hit.sentCount} sent
+                          {hit.lastSubject ? ` · last: ${hit.lastSubject}` : ""}
+                          {hit.lastActivityAt
+                            ? ` · ${new Date(hit.lastActivityAt).toLocaleString()}`
+                            : ""}
+                        </span>
+                      </span>
+                      <span className="shrink-0 text-[0.7rem] font-semibold text-[var(--color-accent)]">
+                        Timeline
+                      </span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </div>
 
         <div className="grid gap-5 sm:grid-cols-2">
           <div>
@@ -507,6 +625,15 @@ export function ComposerForm() {
           </button>
         </div>
       </form>
+
+      {usageEmail && (
+        <RecipientUsageModal
+          email={usageEmail}
+          relatedEmails={priorUsed.map((h) => h.email)}
+          onClose={() => setUsageEmail(null)}
+          onViewOther={(next) => setUsageEmail(next)}
+        />
+      )}
     </>
   );
 }

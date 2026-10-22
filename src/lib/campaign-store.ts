@@ -1,5 +1,5 @@
 import { randomUUID } from "crypto";
-import { and, asc, count, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, count, desc, eq, inArray, like, or, sql } from "drizzle-orm";
 import { getDb } from "@/lib/db";
 import { attachments, campaigns, recipients } from "@/lib/db/schema";
 
@@ -295,13 +295,54 @@ export type CampaignsPage = {
 export async function listCampaignsPage(
   page: number,
   pageSize: number,
+  q?: string,
 ): Promise<CampaignsPage> {
   const safePageSize = Math.min(100, Math.max(1, Math.floor(pageSize) || 10));
   const safePage = Math.max(1, Math.floor(page) || 1);
   const db = await getDb();
+  const needle = q?.trim() ?? "";
 
-  const totalRow = await db.select({ n: count() }).from(campaigns).get();
-  const total = Number(totalRow?.n ?? 0);
+  let matchedIds: string[] | null = null;
+  if (needle) {
+    const pattern = `%${needle}%`;
+    const byFields = await db
+      .select({ id: campaigns.id })
+      .from(campaigns)
+      .where(
+        or(
+          like(campaigns.subject, pattern),
+          like(campaigns.senderEmail, pattern),
+          like(campaigns.status, pattern),
+        ),
+      )
+      .all();
+    const byRecipient = await db
+      .selectDistinct({ id: recipients.campaignId })
+      .from(recipients)
+      .where(like(recipients.email, pattern))
+      .all();
+    matchedIds = [
+      ...new Set([
+        ...byFields.map((r) => r.id),
+        ...byRecipient.map((r) => r.id),
+      ]),
+    ];
+  }
+
+  if (matchedIds && matchedIds.length === 0) {
+    return {
+      items: [],
+      total: 0,
+      page: 1,
+      pageSize: safePageSize,
+      totalPages: 1,
+    };
+  }
+
+  const total =
+    matchedIds == null
+      ? Number((await db.select({ n: count() }).from(campaigns).get())?.n ?? 0)
+      : matchedIds.length;
   const totalPages = Math.max(1, Math.ceil(total / safePageSize) || 1);
   const currentPage = Math.min(safePage, totalPages);
   const offset = (currentPage - 1) * safePageSize;
@@ -309,13 +350,22 @@ export async function listCampaignsPage(
   const rows =
     total === 0
       ? []
-      : await db
-          .select()
-          .from(campaigns)
-          .orderBy(desc(campaigns.createdAt))
-          .limit(safePageSize)
-          .offset(offset)
-          .all();
+      : matchedIds == null
+        ? await db
+            .select()
+            .from(campaigns)
+            .orderBy(desc(campaigns.createdAt))
+            .limit(safePageSize)
+            .offset(offset)
+            .all()
+        : await db
+            .select()
+            .from(campaigns)
+            .where(inArray(campaigns.id, matchedIds))
+            .orderBy(desc(campaigns.createdAt))
+            .limit(safePageSize)
+            .offset(offset)
+            .all();
 
   const ids = rows.map((row) => row.id);
   const { recipientRows, attachmentRows } = await rowsForCampaigns(ids, {
@@ -567,6 +617,185 @@ export async function listRecipientDirectory(
 ): Promise<RecipientDirectoryEntry[]> {
   const page = await listRecipientsPage(1, limit);
   return page.items;
+}
+
+export type RecipientUsageEvent = {
+  campaignId: string;
+  subject: string;
+  bodyHtml: string;
+  senderEmail: string;
+  campaignStatus: CampaignStatus;
+  recipientStatus: RecipientStatus;
+  errorMessage: string | null;
+  sentAt: Date | null;
+  createdAt: Date;
+  attachmentCount: number;
+};
+
+export type RecipientUsageTimeline = {
+  email: string;
+  usedBefore: boolean;
+  sentCount: number;
+  failedCount: number;
+  pendingCount: number;
+  events: RecipientUsageEvent[];
+};
+
+/** Full send timeline for one recipient email (newest first). */
+export async function getRecipientUsageTimeline(
+  email: string,
+): Promise<RecipientUsageTimeline> {
+  const normalized = email.trim().toLowerCase();
+  if (!normalized) {
+    return {
+      email: email.trim(),
+      usedBefore: false,
+      sentCount: 0,
+      failedCount: 0,
+      pendingCount: 0,
+      events: [],
+    };
+  }
+
+  const db = await getDb();
+  const rows = await db
+    .select({
+      campaignId: campaigns.id,
+      subject: campaigns.subject,
+      bodyHtml: campaigns.bodyHtml,
+      senderEmail: campaigns.senderEmail,
+      campaignStatus: campaigns.status,
+      createdAt: campaigns.createdAt,
+      recipientEmail: recipients.email,
+      recipientStatus: recipients.status,
+      errorMessage: recipients.errorMessage,
+      sentAt: recipients.sentAt,
+    })
+    .from(recipients)
+    .innerJoin(campaigns, eq(recipients.campaignId, campaigns.id))
+    .where(sql`lower(${recipients.email}) = ${normalized}`)
+    .orderBy(desc(campaigns.createdAt))
+    .all();
+
+  const campaignIds = [...new Set(rows.map((r) => r.campaignId))];
+  const attachmentCounts = new Map<string, number>();
+  if (campaignIds.length > 0) {
+    const attRows = await db
+      .select({
+        campaignId: attachments.campaignId,
+        n: count(),
+      })
+      .from(attachments)
+      .where(inArray(attachments.campaignId, campaignIds))
+      .groupBy(attachments.campaignId)
+      .all();
+    for (const row of attRows) {
+      attachmentCounts.set(row.campaignId, Number(row.n ?? 0));
+    }
+  }
+
+  let sentCount = 0;
+  let failedCount = 0;
+  let pendingCount = 0;
+  const events: RecipientUsageEvent[] = rows.map((row) => {
+    if (row.recipientStatus === "SENT") sentCount += 1;
+    else if (row.recipientStatus === "FAILED") failedCount += 1;
+    else pendingCount += 1;
+    return {
+      campaignId: row.campaignId,
+      subject: row.subject,
+      bodyHtml: row.bodyHtml,
+      senderEmail: row.senderEmail,
+      campaignStatus: row.campaignStatus,
+      recipientStatus: row.recipientStatus,
+      errorMessage: row.errorMessage,
+      sentAt: row.sentAt,
+      createdAt: row.createdAt,
+      attachmentCount: attachmentCounts.get(row.campaignId) ?? 0,
+    };
+  });
+
+  return {
+    email: rows[0]?.recipientEmail?.trim() || email.trim(),
+    usedBefore: events.length > 0,
+    sentCount,
+    failedCount,
+    pendingCount,
+    events,
+  };
+}
+
+/** Quick check which addresses already appear in campaign history. */
+export async function checkRecipientsUsedBefore(
+  emails: string[],
+): Promise<
+  {
+    email: string;
+    usedBefore: boolean;
+    sentCount: number;
+    failedCount: number;
+    lastActivityAt: Date | null;
+    lastSubject: string | null;
+  }[]
+> {
+  const unique = [
+    ...new Set(emails.map((e) => e.trim().toLowerCase()).filter(Boolean)),
+  ];
+  if (unique.length === 0) return [];
+
+  const db = await getDb();
+  const rows = await db
+    .select({
+      email: recipients.email,
+      status: recipients.status,
+      sentAt: recipients.sentAt,
+      subject: campaigns.subject,
+      createdAt: campaigns.createdAt,
+    })
+    .from(recipients)
+    .innerJoin(campaigns, eq(recipients.campaignId, campaigns.id))
+    .orderBy(desc(campaigns.createdAt))
+    .all();
+
+  const byEmail = new Map<
+    string,
+    {
+      email: string;
+      usedBefore: boolean;
+      sentCount: number;
+      failedCount: number;
+      lastActivityAt: Date | null;
+      lastSubject: string | null;
+    }
+  >();
+
+  for (const key of unique) {
+    byEmail.set(key, {
+      email: key,
+      usedBefore: false,
+      sentCount: 0,
+      failedCount: 0,
+      lastActivityAt: null,
+      lastSubject: null,
+    });
+  }
+
+  for (const row of rows) {
+    const key = row.email.trim().toLowerCase();
+    const entry = byEmail.get(key);
+    if (!entry) continue;
+    entry.usedBefore = true;
+    entry.email = row.email.trim();
+    if (row.status === "SENT") entry.sentCount += 1;
+    else if (row.status === "FAILED") entry.failedCount += 1;
+    const activity = row.sentAt ?? row.createdAt;
+    if (!entry.lastActivityAt || activity > entry.lastActivityAt) {
+      entry.lastActivityAt = activity;
+      entry.lastSubject = row.subject;
+    }
+  }
+
+  return unique.map((key) => byEmail.get(key)!);
 }
 
 export async function listRecipientsPage(
