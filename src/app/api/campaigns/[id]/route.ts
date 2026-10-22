@@ -8,7 +8,7 @@ type Params = { params: Promise<{ id: string }> };
 export async function GET(_req: Request, context: Params) {
   const { id } = await context.params;
 
-  const campaign = getCampaign(id);
+  const campaign = await getCampaign(id);
 
   if (!campaign) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });

@@ -26,6 +26,9 @@
 
 /uploads
 
+# sqlite database (includes WAL/SHM sidecars)
+/data
+
 # debug
 npm-debug.log*
 yarn-debug.log*

@@ -44,8 +44,8 @@ function transporterFromEnv() {
   });
 }
 
-export function getTransporter() {
-  const fromStore = getActiveSmtpConfigForSend();
+export async function getTransporter() {
+  const fromStore = await getActiveSmtpConfigForSend();
   if (
     fromStore &&
     fromStore.username &&

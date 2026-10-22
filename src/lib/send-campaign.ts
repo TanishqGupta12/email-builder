@@ -5,6 +5,7 @@ import {
   setCampaignStatus,
 } from "@/lib/campaign-store";
 import { getTransporter } from "@/lib/smtp";
+import type { Transporter } from "nodemailer";
 
 /** Space between messages when not using custom delay (keeps SMTP strictly one-by-one). */
 const DEFAULT_GAP_MS = 400;
@@ -30,7 +31,7 @@ export async function sendCampaignEmails(campaignId: string) {
   activeSends.add(campaignId);
 
   try {
-    const campaign = getCampaign(campaignId);
+    const campaign = await getCampaign(campaignId);
 
     if (!campaign) return;
 
@@ -39,15 +40,15 @@ export async function sendCampaignEmails(campaignId: string) {
       return;
     }
 
-    setCampaignStatus(campaignId, "SENDING");
+    await setCampaignStatus(campaignId, "SENDING");
 
-    let transporter: ReturnType<typeof getTransporter>;
+    let transporter: Transporter;
     try {
-      transporter = getTransporter();
+      transporter = await getTransporter();
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
-      failAllPendingRecipients(campaignId, `SMTP: ${message}`);
-      setCampaignStatus(campaignId, "COMPLETED");
+      await failAllPendingRecipients(campaignId, `SMTP: ${message}`);
+      await setCampaignStatus(campaignId, "COMPLETED");
       return;
     }
 
@@ -72,14 +73,14 @@ export async function sendCampaignEmails(campaignId: string) {
           attachments: mailAttachments.length ? mailAttachments : undefined,
         });
 
-        patchRecipient(campaignId, recipient.id, {
+        await patchRecipient(campaignId, recipient.id, {
           status: "SENT",
           sentAt: new Date(),
           errorMessage: null,
         });
       } catch (err: unknown) {
         const message = err instanceof Error ? err.message : String(err);
-        patchRecipient(campaignId, recipient.id, {
+        await patchRecipient(campaignId, recipient.id, {
           status: "FAILED",
           errorMessage: message,
         });
@@ -93,7 +94,7 @@ export async function sendCampaignEmails(campaignId: string) {
       }
     }
 
-    setCampaignStatus(campaignId, "COMPLETED");
+    await setCampaignStatus(campaignId, "COMPLETED");
   } finally {
     activeSends.delete(campaignId);
   }

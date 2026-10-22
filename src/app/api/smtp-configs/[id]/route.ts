@@ -18,7 +18,7 @@ type Params = { params: Promise<{ id: string }> };
 
 export async function GET(_req: Request, { params }: Params) {
   const { id } = await params;
-  const c = getSmtpConfig(id);
+  const c = await getSmtpConfig(id);
   if (!c) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
@@ -30,7 +30,7 @@ export async function GET(_req: Request, { params }: Params) {
 
 export async function PATCH(req: Request, { params }: Params) {
   const { id } = await params;
-  const existing = getSmtpConfig(id);
+  const existing = await getSmtpConfig(id);
   if (!existing) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
@@ -78,7 +78,7 @@ export async function PATCH(req: Request, { params }: Params) {
     patch.encryption = enc;
   }
 
-  const updated = updateSmtpConfig(id, patch);
+  const updated = await updateSmtpConfig(id, patch);
   if (!updated) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
@@ -91,7 +91,7 @@ export async function PATCH(req: Request, { params }: Params) {
 
 export async function DELETE(_req: Request, { params }: Params) {
   const { id } = await params;
-  const ok = deleteSmtpConfig(id);
+  const ok = await deleteSmtpConfig(id);
   if (!ok) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }

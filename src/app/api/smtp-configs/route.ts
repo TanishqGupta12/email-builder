@@ -13,7 +13,7 @@ function parseEncryption(v: unknown): SmtpEncryption | null {
 }
 
 export async function GET() {
-  return NextResponse.json({ configs: listSmtpConfigs() });
+  return NextResponse.json({ configs: await listSmtpConfigs() });
 }
 
 export async function POST(req: Request) {
@@ -46,7 +46,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Encryption must be tls, ssl, or none." }, { status: 400 });
   }
 
-  const rec = createSmtpConfig({
+  const rec = await createSmtpConfig({
     name: host,
     host,
     port,

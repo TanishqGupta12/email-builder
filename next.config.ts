@@ -1,7 +1,7 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  serverExternalPackages: ["nodemailer"],
+  serverExternalPackages: ["nodemailer", "@libsql/client"],
   experimental: {
     serverActions: {
       bodySizeLimit: "10mb",
