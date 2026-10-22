@@ -280,26 +280,96 @@ export async function getCampaign(
 }
 
 export async function listRecentCampaigns(limit: number): Promise<Campaign[]> {
+  const page = await listCampaignsPage(1, limit);
+  return page.items;
+}
+
+export type CampaignsPage = {
+  items: Campaign[];
+  total: number;
+  page: number;
+  pageSize: number;
+  totalPages: number;
+};
+
+export async function listCampaignsPage(
+  page: number,
+  pageSize: number,
+): Promise<CampaignsPage> {
+  const safePageSize = Math.min(100, Math.max(1, Math.floor(pageSize) || 10));
+  const safePage = Math.max(1, Math.floor(page) || 1);
   const db = await getDb();
-  const rows = await db
-    .select()
-    .from(campaigns)
-    .orderBy(desc(campaigns.createdAt))
-    .limit(limit)
-    .all();
+
+  const totalRow = await db.select({ n: count() }).from(campaigns).get();
+  const total = Number(totalRow?.n ?? 0);
+  const totalPages = Math.max(1, Math.ceil(total / safePageSize) || 1);
+  const currentPage = Math.min(safePage, totalPages);
+  const offset = (currentPage - 1) * safePageSize;
+
+  const rows =
+    total === 0
+      ? []
+      : await db
+          .select()
+          .from(campaigns)
+          .orderBy(desc(campaigns.createdAt))
+          .limit(safePageSize)
+          .offset(offset)
+          .all();
+
   const ids = rows.map((row) => row.id);
   const { recipientRows, attachmentRows } = await rowsForCampaigns(ids, {
     includeContent: false,
   });
   const recipientsByCampaign = groupByCampaign(recipientRows);
   const attachmentsByCampaign = groupByCampaign(attachmentRows);
-  return rows.map((row) =>
+  const items = rows.map((row) =>
     toCampaign(
       row,
       recipientsByCampaign.get(row.id) ?? [],
       attachmentsByCampaign.get(row.id) ?? [],
     ),
   );
+
+  return {
+    items,
+    total,
+    page: currentPage,
+    pageSize: safePageSize,
+    totalPages,
+  };
+}
+
+/** Permanently remove campaigns and related recipients/attachments from the DB. */
+export async function deleteCampaigns(ids: string[]): Promise<number> {
+  const unique = [...new Set(ids.map((id) => id.trim()).filter(Boolean))];
+  if (unique.length === 0) return 0;
+
+  const db = await getDb();
+  const existing = await db
+    .select({ id: campaigns.id })
+    .from(campaigns)
+    .where(inArray(campaigns.id, unique))
+    .all();
+  const toDelete = existing.map((row) => row.id);
+  if (toDelete.length === 0) return 0;
+
+  // Chunk to stay within SQLite variable limits.
+  for (let i = 0; i < toDelete.length; i += 200) {
+    const chunk = toDelete.slice(i, i + 200);
+    await db.transaction(async (tx) => {
+      await tx.delete(attachments).where(inArray(attachments.campaignId, chunk)).run();
+      await tx.delete(recipients).where(inArray(recipients.campaignId, chunk)).run();
+      await tx.delete(campaigns).where(inArray(campaigns.id, chunk)).run();
+    });
+  }
+  return toDelete.length;
+}
+
+export async function deleteAllCampaigns(): Promise<number> {
+  const db = await getDb();
+  const rows = await db.select({ id: campaigns.id }).from(campaigns).all();
+  return deleteCampaigns(rows.map((r) => r.id));
 }
 
 export async function setCampaignStatus(id: string, status: CampaignStatus): Promise<void> {
@@ -365,6 +435,216 @@ export async function failAllPendingRecipients(
       .where(eq(campaigns.id, campaignId))
       .run();
   });
+}
+
+/** Reset FAILED (and optionally keep PENDING) so a stuck campaign can be retried. */
+export async function prepareCampaignRetry(
+  campaignId: string,
+  opts: { includeFailed?: boolean } = { includeFailed: true },
+): Promise<{ ok: true; pendingCount: number } | { ok: false; error: string }> {
+  const campaign = await getCampaign(campaignId, { includeContent: false });
+  if (!campaign) return { ok: false, error: "Campaign not found." };
+
+  const includeFailed = opts.includeFailed !== false;
+  const retryable = campaign.recipients.filter(
+    (r) => r.status === "PENDING" || (includeFailed && r.status === "FAILED"),
+  );
+  if (retryable.length === 0) {
+    return { ok: false, error: "No pending or failed recipients to retry." };
+  }
+
+  const db = await getDb();
+  const now = new Date();
+  await db.transaction(async (tx) => {
+    if (includeFailed) {
+      await tx
+        .update(recipients)
+        .set({ status: "PENDING", errorMessage: null, sentAt: null })
+        .where(and(eq(recipients.campaignId, campaignId), eq(recipients.status, "FAILED")))
+        .run();
+    }
+    await tx
+      .update(campaigns)
+      .set({ status: "QUEUED", updatedAt: now })
+      .where(eq(campaigns.id, campaignId))
+      .run();
+  });
+
+  return { ok: true, pendingCount: retryable.length };
+}
+
+export type RecipientDirectoryEntry = {
+  email: string;
+  sentCount: number;
+  failedCount: number;
+  pendingCount: number;
+  campaignCount: number;
+  lastActivityAt: Date | null;
+  recentCampaigns: {
+    campaignId: string;
+    subject: string;
+    campaignStatus: CampaignStatus;
+    recipientStatus: RecipientStatus;
+    senderEmail: string;
+    createdAt: Date;
+    errorMessage: string | null;
+  }[];
+};
+
+function buildRecipientDirectory(
+  rows: {
+    email: string;
+    status: RecipientStatus;
+    errorMessage: string | null;
+    sentAt: Date | null;
+    campaignId: string;
+    subject: string;
+    campaignStatus: CampaignStatus;
+    senderEmail: string;
+    campaignCreatedAt: Date;
+  }[],
+): RecipientDirectoryEntry[] {
+  const byEmail = new Map<string, RecipientDirectoryEntry>();
+
+  for (const row of rows) {
+    const key = row.email.trim().toLowerCase();
+    if (!key) continue;
+    let entry = byEmail.get(key);
+    if (!entry) {
+      entry = {
+        email: row.email.trim(),
+        sentCount: 0,
+        failedCount: 0,
+        pendingCount: 0,
+        campaignCount: 0,
+        lastActivityAt: null,
+        recentCampaigns: [],
+      };
+      byEmail.set(key, entry);
+    }
+
+    if (row.status === "SENT") entry.sentCount += 1;
+    else if (row.status === "FAILED") entry.failedCount += 1;
+    else entry.pendingCount += 1;
+
+    entry.campaignCount += 1;
+    const activity = row.sentAt ?? row.campaignCreatedAt;
+    if (!entry.lastActivityAt || activity > entry.lastActivityAt) {
+      entry.lastActivityAt = activity;
+    }
+
+    if (entry.recentCampaigns.length < 8) {
+      entry.recentCampaigns.push({
+        campaignId: row.campaignId,
+        subject: row.subject,
+        campaignStatus: row.campaignStatus,
+        recipientStatus: row.status,
+        senderEmail: row.senderEmail,
+        createdAt: row.campaignCreatedAt,
+        errorMessage: row.errorMessage,
+      });
+    }
+  }
+
+  return [...byEmail.values()].sort((a, b) => {
+    const at = a.lastActivityAt?.getTime() ?? 0;
+    const bt = b.lastActivityAt?.getTime() ?? 0;
+    return bt - at;
+  });
+}
+
+export type RecipientsPage = {
+  items: RecipientDirectoryEntry[];
+  total: number;
+  page: number;
+  pageSize: number;
+  totalPages: number;
+};
+
+/** Unique recipient emails with recent campaign history for reuse. */
+export async function listRecipientDirectory(
+  limit = 200,
+): Promise<RecipientDirectoryEntry[]> {
+  const page = await listRecipientsPage(1, limit);
+  return page.items;
+}
+
+export async function listRecipientsPage(
+  page: number,
+  pageSize: number,
+): Promise<RecipientsPage> {
+  const safePageSize = Math.min(100, Math.max(1, Math.floor(pageSize) || 10));
+  const safePage = Math.max(1, Math.floor(page) || 1);
+  const db = await getDb();
+  const rows = await db
+    .select({
+      email: recipients.email,
+      status: recipients.status,
+      errorMessage: recipients.errorMessage,
+      sentAt: recipients.sentAt,
+      campaignId: campaigns.id,
+      subject: campaigns.subject,
+      campaignStatus: campaigns.status,
+      senderEmail: campaigns.senderEmail,
+      campaignCreatedAt: campaigns.createdAt,
+    })
+    .from(recipients)
+    .innerJoin(campaigns, eq(recipients.campaignId, campaigns.id))
+    .orderBy(desc(campaigns.createdAt))
+    .all();
+
+  const all = buildRecipientDirectory(rows);
+  const total = all.length;
+  const totalPages = Math.max(1, Math.ceil(total / safePageSize) || 1);
+  const currentPage = Math.min(safePage, totalPages);
+  const start = (currentPage - 1) * safePageSize;
+
+  return {
+    items: all.slice(start, start + safePageSize),
+    total,
+    page: currentPage,
+    pageSize: safePageSize,
+    totalPages,
+  };
+}
+
+/** Permanently remove recipient rows for the given emails (case-insensitive). */
+export async function deleteRecipientsByEmails(emails: string[]): Promise<number> {
+  const keys = [
+    ...new Set(emails.map((e) => e.trim().toLowerCase()).filter(Boolean)),
+  ];
+  if (keys.length === 0) return 0;
+
+  const db = await getDb();
+  const allRows = await db
+    .select({ id: recipients.id, email: recipients.email })
+    .from(recipients)
+    .all();
+  const ids = allRows
+    .filter((row) => keys.includes(row.email.trim().toLowerCase()))
+    .map((row) => row.id);
+
+  let deleted = 0;
+  for (let i = 0; i < ids.length; i += 200) {
+    const chunk = ids.slice(i, i + 200);
+    const result = await db.delete(recipients).where(inArray(recipients.id, chunk)).run();
+    deleted += Number(result.rowsAffected ?? 0);
+  }
+  return deleted;
+}
+
+export async function deleteAllRecipients(): Promise<number> {
+  const db = await getDb();
+  const rows = await db.select({ id: recipients.id }).from(recipients).all();
+  if (rows.length === 0) return 0;
+  let deleted = 0;
+  const ids = rows.map((r) => r.id);
+  for (let i = 0; i < ids.length; i += 200) {
+    const chunk = ids.slice(i, i + 200);
+    const result = await db.delete(recipients).where(inArray(recipients.id, chunk)).run();
+    deleted += Number(result.rowsAffected ?? 0);
+  }
+  return deleted;
 }
 
 export async function aggregateStats(): Promise<{

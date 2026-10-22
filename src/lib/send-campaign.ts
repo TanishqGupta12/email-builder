@@ -24,7 +24,10 @@ function delayBetweenMs(campaign: {
   return DEFAULT_GAP_MS;
 }
 
-export async function sendCampaignEmails(campaignId: string) {
+export async function sendCampaignEmails(
+  campaignId: string,
+  opts: { allowSending?: boolean } = {},
+) {
   if (activeSends.has(campaignId)) {
     console.warn("[sendCampaignEmails] already running, skipping duplicate for", campaignId);
     return;
@@ -36,12 +39,17 @@ export async function sendCampaignEmails(campaignId: string) {
 
     if (!campaign) return;
 
-    if (campaign.status !== "QUEUED") {
+    const statusOk =
+      campaign.status === "QUEUED" ||
+      (opts.allowSending === true && campaign.status === "SENDING");
+    if (!statusOk) {
       console.warn("[sendCampaignEmails] expected QUEUED, got", campaign.status, campaignId);
       return;
     }
 
-    await setCampaignStatus(campaignId, "SENDING");
+    if (campaign.status !== "SENDING") {
+      await setCampaignStatus(campaignId, "SENDING");
+    }
 
     let transporter: Transporter;
     try {

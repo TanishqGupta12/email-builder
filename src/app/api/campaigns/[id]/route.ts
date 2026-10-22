@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getCampaign } from "@/lib/campaign-store";
+import { deleteCampaigns, getCampaign } from "@/lib/campaign-store";
 
 export const runtime = "nodejs";
 
@@ -22,4 +22,13 @@ export async function GET(_req: Request, context: Params) {
       ),
     },
   });
+}
+
+export async function DELETE(_req: Request, context: Params) {
+  const { id } = await context.params;
+  const deleted = await deleteCampaigns([id]);
+  if (deleted === 0) {
+    return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
+  return NextResponse.json({ deleted: 1, id });
 }

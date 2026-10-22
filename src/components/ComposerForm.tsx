@@ -148,13 +148,22 @@ export function ComposerForm() {
       setSenderEmail(detail.senderEmail);
       setSubject(detail.subject);
       setBodyHtml(detail.bodyHtml || "<p></p>");
+      if (typeof detail.recipientsText === "string") {
+        setRecipientsText(detail.recipientsText);
+      }
       pendingRichTextRemount.current = true;
       setRichTextBootKey((k) => k + 1);
       clearCsv();
       clearAllAttachments();
 
+      const hasRecipients = Boolean(detail.recipientsText?.trim());
+
       if (detail.attachments.length === 0) {
-        setReuseNotice("Loaded previous subject and message. Add recipients, then send.");
+        setReuseNotice(
+          hasRecipients
+            ? "Loaded previous email into Compose. Edit anything, then send."
+            : "Loaded previous subject and message. Add recipients, then send.",
+        );
         return;
       }
 
@@ -183,7 +192,7 @@ export function ComposerForm() {
       setFiles(loaded);
       if (missing > 0 && loaded.length === 0) {
         setReuseNotice(
-          "Loaded subject and message. Attachments were not found on disk — re-attach them if needed.",
+          "Loaded subject and message. Attachments were missing — re-attach them if needed.",
         );
       } else if (missing > 0) {
         setReuseNotice(
@@ -191,7 +200,9 @@ export function ComposerForm() {
         );
       } else {
         setReuseNotice(
-          `Loaded previous subject, message, and ${loaded.length} attachment(s). Add recipients, then send.`,
+          hasRecipients
+            ? `Loaded previous email with ${loaded.length} attachment(s). Edit and send when ready.`
+            : `Loaded previous subject, message, and ${loaded.length} attachment(s). Add recipients, then send.`,
         );
       }
     },

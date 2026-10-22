@@ -3,8 +3,13 @@ import { NextResponse } from "next/server";
 import {
   addCampaignAttachment,
   createCampaign,
-  listRecentCampaigns,
+  deleteAllCampaigns,
+  deleteCampaigns,
+  failAllPendingRecipients,
+  listCampaignsPage,
+  setCampaignStatus,
 } from "@/lib/campaign-store";
+import { parsePageParams } from "@/lib/pagination";
 import {
   extractEmailsFromCsvText,
   parseEmailPaste,
@@ -14,6 +19,7 @@ import { sendCampaignEmails } from "@/lib/send-campaign";
 import { saveAttachment } from "@/lib/uploads";
 
 export const runtime = "nodejs";
+export const maxDuration = 300;
 
 function countByStatus(
   rows: { status: string }[],
@@ -29,10 +35,14 @@ function countByStatus(
   return { sent, failed, pending };
 }
 
-export async function GET() {
-  const campaigns = await listRecentCampaigns(25);
+export async function GET(req: Request) {
+  const { page, pageSize } = parsePageParams(new URL(req.url).searchParams, {
+    page: 1,
+    pageSize: 10,
+  });
+  const result = await listCampaignsPage(page, pageSize);
 
-  const payload = campaigns.map((c) => ({
+  const payload = result.items.map((c) => ({
     id: c.id,
     senderEmail: c.senderEmail,
     subject: c.subject,
@@ -49,7 +59,43 @@ export async function GET() {
     ...countByStatus(c.recipients),
   }));
 
-  return NextResponse.json({ campaigns: payload });
+  return NextResponse.json({
+    campaigns: payload,
+    pagination: {
+      page: result.page,
+      pageSize: result.pageSize,
+      total: result.total,
+      totalPages: result.totalPages,
+    },
+  });
+}
+
+/** Permanently delete selected campaigns, or all campaigns when `{ all: true }`. */
+export async function DELETE(req: Request) {
+  let body: { ids?: unknown; all?: unknown } = {};
+  try {
+    body = (await req.json()) as { ids?: unknown; all?: unknown };
+  } catch {
+    return NextResponse.json({ error: "Invalid JSON body." }, { status: 400 });
+  }
+
+  if (body.all === true) {
+    const deleted = await deleteAllCampaigns();
+    return NextResponse.json({ deleted, all: true });
+  }
+
+  const ids = Array.isArray(body.ids)
+    ? body.ids.filter((id): id is string => typeof id === "string" && id.trim().length > 0)
+    : [];
+  if (ids.length === 0) {
+    return NextResponse.json(
+      { error: "Provide ids to delete, or set all: true." },
+      { status: 400 },
+    );
+  }
+
+  const deleted = await deleteCampaigns(ids);
+  return NextResponse.json({ deleted, ids });
 }
 
 export async function POST(req: Request) {
@@ -110,6 +156,9 @@ export async function POST(req: Request) {
     }
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
+    // Avoid leaving the campaign stuck in QUEUED with no send scheduled.
+    await failAllPendingRecipients(campaign.id, message);
+    await setCampaignStatus(campaign.id, "COMPLETED");
     return NextResponse.json({ error: message, id: campaign.id }, { status: 400 });
   }
 

@@ -15,7 +15,8 @@ export default function HistoryPage() {
             Sent history
           </h1>
           <p className="mt-2 max-w-xl text-sm leading-relaxed text-[var(--color-ink-muted)] sm:text-base">
-            Open a campaign to preview content, download attachments, or reuse it in Compose.
+            View past sends, download attachments, reuse or retry, and delete selected or all
+            campaigns permanently.
           </p>
         </header>
         <div className="rise-in rise-in-delay-1 ui-panel overflow-hidden">
