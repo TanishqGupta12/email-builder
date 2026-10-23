@@ -1,7 +1,7 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ListPagination } from "@/components/ListPagination";
 import {
   emptySearchForm,
@@ -95,8 +95,15 @@ export function MailApp() {
   const [sendAt, setSendAt] = useState("");
   const [editorKey, setEditorKey] = useState(0);
 
+  const listAbort = useRef<AbortController | null>(null);
+  const listSeq = useRef(0);
+
   const load = useCallback(
     async (page = pagination.page, pageSize = pagination.pageSize, search = appliedSearch) => {
+      listAbort.current?.abort();
+      const controller = new AbortController();
+      listAbort.current = controller;
+      const seq = ++listSeq.current;
       setLoadingList(true);
       setError(null);
       try {
@@ -105,7 +112,8 @@ export function MailApp() {
         params.set("page", String(page));
         params.set("pageSize", String(pageSize));
         params.set("sort", sort);
-        const res = await fetch(`/api/mail?${params}`);
+        const res = await fetch(`/api/mail?${params}`, { signal: controller.signal });
+        if (seq !== listSeq.current) return;
         const data = await res.json();
         if (!res.ok) {
           setError(data.error ?? "Could not load mail");
@@ -117,11 +125,13 @@ export function MailApp() {
         setPagination(data.pagination as Pagination);
         setSearchSummary(data.searchSummary ?? null);
         setSelected(new Set());
-      } catch {
+      } catch (err: unknown) {
+        if (seq !== listSeq.current) return;
+        if (err instanceof Error && err.name === "AbortError") return;
         setError("Network error while loading mail");
         setRows([]);
       } finally {
-        setLoadingList(false);
+        if (seq === listSeq.current) setLoadingList(false);
       }
     },
     [folder, pagination.page, pagination.pageSize, sort, appliedSearch],
@@ -157,6 +167,9 @@ export function MailApp() {
 
   useEffect(() => {
     void load(1, pagination.pageSize, appliedSearch);
+    return () => {
+      listAbort.current?.abort();
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [folder, sort, appliedSearch]);
 

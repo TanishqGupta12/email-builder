@@ -136,8 +136,36 @@ export function OpeningsImport() {
               {OPENING_COLUMNS.map((column) => (
                 <label key={column.key} className="flex flex-col gap-1">
                   <span className="text-[11px] font-semibold text-[var(--color-ink-muted)]">
-                    {column.label}
+                    {column.key === "date" ? "Date range" : column.label}
                   </span>
+                  {column.key === "date" && (
+                    <div className="grid grid-cols-2 gap-1">
+                      <span className="flex flex-col gap-0.5">
+                        <span className="text-[10px] text-[var(--color-ink-muted)]">From</span>
+                        <input
+                          className={inputClass}
+                          type="date"
+                          aria-label="From date"
+                          value={filters.dateFrom}
+                          onChange={(event) =>
+                            updateFilters({ ...filters, dateFrom: event.target.value })
+                          }
+                        />
+                      </span>
+                      <span className="flex flex-col gap-0.5">
+                        <span className="text-[10px] text-[var(--color-ink-muted)]">To</span>
+                        <input
+                          className={inputClass}
+                          type="date"
+                          aria-label="To date"
+                          value={filters.dateTo}
+                          onChange={(event) =>
+                            updateFilters({ ...filters, dateTo: event.target.value })
+                          }
+                        />
+                      </span>
+                    </div>
+                  )}
                   {column.key === "emails" && (
                     <select
                       className={inputClass}
@@ -176,12 +204,14 @@ export function OpeningsImport() {
                       />
                     </div>
                   )}
-                  <input
-                    className={inputClass}
-                    placeholder={`Contains…`}
-                    value={filters.text[column.key] ?? ""}
-                    onChange={(event) => setText(column.key, event.target.value)}
-                  />
+                  {column.key !== "date" && (
+                    <input
+                      className={inputClass}
+                      placeholder="Contains…"
+                      value={filters.text[column.key] ?? ""}
+                      onChange={(event) => setText(column.key, event.target.value)}
+                    />
+                  )}
                 </label>
               ))}
             </div>

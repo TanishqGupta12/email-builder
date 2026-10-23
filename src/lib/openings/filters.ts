@@ -27,6 +27,8 @@ export type OpeningFilters = {
   emailPresence: EmailPresence;
   experienceMin: string;
   experienceMax: string;
+  dateFrom: string;
+  dateTo: string;
 };
 
 export const EMPTY_OPENING_FILTERS: OpeningFilters = {
@@ -34,7 +36,32 @@ export const EMPTY_OPENING_FILTERS: OpeningFilters = {
   emailPresence: "any",
   experienceMin: "",
   experienceMax: "",
+  dateFrom: "",
+  dateTo: "",
 };
+
+function parseChatDate(value: string): number | null {
+  const match = value.trim().match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/);
+  if (!match) return null;
+  const day = Number(match[1]);
+  const month = Number(match[2]);
+  let year = Number(match[3]);
+  if (year < 100) year += 2000;
+  const date = new Date(year, month - 1, day);
+  if (date.getFullYear() !== year || date.getMonth() !== month - 1 || date.getDate() !== day) return null;
+  return date.getTime();
+}
+
+function parsePickerDate(value: string): number | null {
+  const match = value.trim().match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) return null;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const date = new Date(year, month - 1, day);
+  if (date.getFullYear() !== year || date.getMonth() !== month - 1 || date.getDate() !== day) return null;
+  return date.getTime();
+}
 
 function contains(value: string, query: string): boolean {
   const needle = query.trim().toLowerCase();
@@ -52,8 +79,18 @@ function yearsLimit(value: string): number | null {
 export function filterOpenings(rows: OpeningRow[], filters: OpeningFilters): OpeningRow[] {
   const minYears = yearsLimit(filters.experienceMin);
   const maxYears = yearsLimit(filters.experienceMax);
+  const rawFrom = parsePickerDate(filters.dateFrom);
+  const rawTo = parsePickerDate(filters.dateTo);
+  const dateFrom = rawFrom !== null && rawTo !== null ? Math.min(rawFrom, rawTo) : rawFrom;
+  const dateTo = rawFrom !== null && rawTo !== null ? Math.max(rawFrom, rawTo) : rawTo;
 
   return rows.filter((row) => {
+    if (dateFrom !== null || dateTo !== null) {
+      const stamp = parseChatDate(row.date);
+      if (stamp === null) return false;
+      if (dateFrom !== null && stamp < dateFrom) return false;
+      if (dateTo !== null && stamp > dateTo) return false;
+    }
     if (filters.emailPresence === "has" && !row.emails.trim()) return false;
     if (filters.emailPresence === "missing" && row.emails.trim()) return false;
     if (minYears !== null || maxYears !== null) {
@@ -63,12 +100,15 @@ export function filterOpenings(rows: OpeningRow[], filters: OpeningFilters): Ope
       const high = maxYears ?? Number.POSITIVE_INFINITY;
       if (bounds.min > high || bounds.max < low) return false;
     }
-    return OPENING_COLUMNS.every((column) => contains(row[column.key], filters.text[column.key] ?? ""));
+    return OPENING_COLUMNS.every((column) =>
+      column.key === "date" ? true : contains(row[column.key], filters.text[column.key] ?? ""),
+    );
   });
 }
 
 export function filtersAreActive(filters: OpeningFilters): boolean {
   if (filters.emailPresence !== "any") return true;
   if (filters.experienceMin.trim() || filters.experienceMax.trim()) return true;
+  if (filters.dateFrom.trim() || filters.dateTo.trim()) return true;
   return OPENING_COLUMNS.some((column) => (filters.text[column.key] ?? "").trim().length > 0);
 }

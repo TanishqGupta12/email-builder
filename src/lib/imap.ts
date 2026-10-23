@@ -57,8 +57,52 @@ export async function resolveImapConfig(): Promise<ImapConnectionConfig> {
   };
 }
 
-export async function withImapClient<T>(fn: (client: ImapFlow) => Promise<T>): Promise<T> {
+type ImapPool = {
+  key: string;
+  client: ImapFlow;
+  idle: ReturnType<typeof setTimeout> | null;
+};
+
+const imapGlobal = globalThis as typeof globalThis & {
+  __postlineImapPool?: ImapPool | null;
+  __postlineImapQueue?: Promise<void>;
+};
+
+function configKey(config: ImapConnectionConfig): string {
+  return `${config.host}:${config.port}:${config.user}:${config.pass}`;
+}
+
+async function closeImapPool(): Promise<void> {
+  const current = imapGlobal.__postlineImapPool;
+  imapGlobal.__postlineImapPool = null;
+  if (!current) return;
+  if (current.idle) clearTimeout(current.idle);
+  try {
+    await current.client.logout();
+  } catch {
+    try {
+      current.client.close();
+    } catch {
+      /* ignore */
+    }
+  }
+}
+
+function armImapIdle(): void {
+  const current = imapGlobal.__postlineImapPool;
+  if (!current) return;
+  if (current.idle) clearTimeout(current.idle);
+  current.idle = setTimeout(() => {
+    void closeImapPool();
+  }, 90_000);
+}
+
+async function ensureImapClient(): Promise<ImapFlow> {
   const config = await resolveImapConfig();
+  const key = configKey(config);
+  const current = imapGlobal.__postlineImapPool;
+  if (current && current.key === key && current.client.usable) return current.client;
+  await closeImapPool();
   const client = new ImapFlow({
     host: config.host,
     port: config.port,
@@ -66,21 +110,38 @@ export async function withImapClient<T>(fn: (client: ImapFlow) => Promise<T>): P
     auth: { user: config.user, pass: config.pass },
     logger: false,
   });
-
   await client.connect();
-  try {
-    return await fn(client);
-  } finally {
-    try {
-      await client.logout();
-    } catch {
-      try {
-        client.close();
-      } catch {
-        /* ignore */
-      }
+  imapGlobal.__postlineImapPool = { key, client, idle: null };
+  return client;
+}
+
+function chainImap<T>(task: () => Promise<T>): Promise<T> {
+  const previous = imapGlobal.__postlineImapQueue ?? Promise.resolve();
+  const run = previous.catch(() => undefined).then(task);
+  imapGlobal.__postlineImapQueue = run.then(
+    () => undefined,
+    () => undefined,
+  );
+  return run;
+}
+
+export async function withImapClient<T>(fn: (client: ImapFlow) => Promise<T>): Promise<T> {
+  return chainImap(async () => {
+    const current = imapGlobal.__postlineImapPool;
+    if (current?.idle) {
+      clearTimeout(current.idle);
+      current.idle = null;
     }
-  }
+    try {
+      const client = await ensureImapClient();
+      return await fn(client);
+    } catch (err) {
+      await closeImapPool();
+      throw err;
+    } finally {
+      armImapIdle();
+    }
+  });
 }
 
 export async function withImapMailbox<T>(

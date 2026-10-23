@@ -285,6 +285,13 @@ async function searchMailboxUids(
   }
 }
 
+const LIST_QUERY = {
+  uid: true,
+  flags: true,
+  envelope: true,
+  bodyStructure: true,
+} as const;
+
 async function fetchPageFromMailbox(
   client: ImapFlow,
   mailbox: string,
@@ -293,18 +300,44 @@ async function fetchPageFromMailbox(
   if (uids.length === 0) return [];
   const lock = await client.getMailboxLock(mailbox);
   try {
-    const fetched = await client.fetchAll(
-      uids,
-      {
-        uid: true,
-        flags: true,
-        envelope: true,
-        bodyStructure: true,
-        source: { start: 0, maxLength: 8_000 },
-      },
-      { uid: true },
-    );
+    const fetched = await client.fetchAll(uids, LIST_QUERY, { uid: true });
     return enrichFetchedMessages(fetched, mailbox, uids);
+  } finally {
+    lock.release();
+  }
+}
+
+async function fetchSequencePage(
+  client: ImapFlow,
+  mailbox: string,
+  page: number,
+  pageSize: number,
+  newestFirst: boolean,
+): Promise<{ items: MailListItem[]; total: number; page: number; totalPages: number }> {
+  const lock = await client.getMailboxLock(mailbox);
+  try {
+    const exists =
+      client.mailbox && typeof client.mailbox === "object" ? client.mailbox.exists ?? 0 : 0;
+    const totalPages = Math.max(1, Math.ceil(exists / pageSize) || 1);
+    const currentPage = Math.min(Math.max(1, page), totalPages);
+    if (exists < 1) return { items: [], total: 0, page: 1, totalPages: 1 };
+
+    const start = newestFirst
+      ? Math.max(1, exists - currentPage * pageSize + 1)
+      : (currentPage - 1) * pageSize + 1;
+    const end = newestFirst
+      ? exists - (currentPage - 1) * pageSize
+      : Math.min(exists, currentPage * pageSize);
+    if (end < start) return { items: [], total: exists, page: currentPage, totalPages };
+
+    const fetched = await client.fetchAll(`${start}:${end}`, LIST_QUERY);
+    const ordered = [...fetched].sort((a, b) => (newestFirst ? b.uid - a.uid : a.uid - b.uid));
+    const items = await enrichFetchedMessages(
+      ordered,
+      mailbox,
+      ordered.map((message) => message.uid),
+    );
+    return { items, total: exists, page: currentPage, totalPages };
   } finally {
     lock.release();
   }
@@ -319,7 +352,44 @@ const CROSS_FOLDER_IDS: MailFolderId[] = [
   "starred",
 ];
 
+const dueJobsGlobal = globalThis as typeof globalThis & { __postlineDueJobs?: boolean };
+
+function ensureDueJobs(): void {
+  if (dueJobsGlobal.__postlineDueJobs) return;
+  dueJobsGlobal.__postlineDueJobs = true;
+  const tick = () => {
+    void processDueJobs();
+  };
+  setTimeout(tick, 8_000);
+  setInterval(tick, 60_000);
+}
+
+const listInflight = new Map<string, ReturnType<typeof listMailUncached>>();
+
 export async function listMail(opts: {
+  folder: MailFolderId;
+  page: number;
+  pageSize: number;
+  sort?: MailSort;
+  filters?: MailSearchFilters;
+}): Promise<Awaited<ReturnType<typeof listMailUncached>>> {
+  const key = JSON.stringify({
+    folder: opts.folder,
+    page: opts.page,
+    pageSize: opts.pageSize,
+    sort: opts.sort ?? "date_desc",
+    filters: opts.filters ?? {},
+  });
+  const existing = listInflight.get(key);
+  if (existing) return existing;
+  const pending = listMailUncached(opts).finally(() => {
+    listInflight.delete(key);
+  });
+  listInflight.set(key, pending);
+  return pending;
+}
+
+async function listMailUncached(opts: {
   folder: MailFolderId;
   page: number;
   pageSize: number;
@@ -335,7 +405,7 @@ export async function listMail(opts: {
   accountEmail: string;
   searchSummary?: string;
 }> {
-  await processDueJobs();
+  ensureDueJobs();
   const accountEmail = await getAccountEmail();
   const pageSize = Math.min(50, Math.max(1, opts.pageSize || 20));
   const page = Math.max(1, opts.page || 1);
@@ -366,6 +436,25 @@ export async function listMail(opts: {
     // —— Single folder (accurate UID pagination) ——
     if (filters.scope !== "all_folders") {
       const target = await mailboxForFolder(client, opts.folder);
+      if (!target.search && !hasActiveSearch(filters) && (sort === "date_desc" || sort === "date_asc")) {
+        const latest = await fetchSequencePage(
+          client,
+          target.mailbox,
+          page,
+          pageSize,
+          sort === "date_desc",
+        );
+        return {
+          items: latest.items,
+          total: latest.total,
+          page: latest.page,
+          pageSize,
+          totalPages: latest.totalPages,
+          mailbox: target.mailbox,
+          accountEmail,
+          searchSummary,
+        };
+      }
       const uids = await searchMailboxUids(client, target.mailbox, target.search, filters);
       const total = uids.length;
       const totalPages = Math.max(1, Math.ceil(total / pageSize) || 1);
