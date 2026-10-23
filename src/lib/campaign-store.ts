@@ -603,12 +603,20 @@ function buildRecipientDirectory(
   });
 }
 
+export type RecipientStatusFilter = "all" | "sent" | "pending" | "failed";
+
 export type RecipientsPage = {
   items: RecipientDirectoryEntry[];
   total: number;
   page: number;
   pageSize: number;
   totalPages: number;
+  statusCounts: {
+    all: number;
+    sent: number;
+    pending: number;
+    failed: number;
+  };
 };
 
 /** Unique recipient emails with recent campaign history for reuse. */
@@ -802,6 +810,7 @@ export async function listRecipientsPage(
   page: number,
   pageSize: number,
   q?: string,
+  status: RecipientStatusFilter = "all",
 ): Promise<RecipientsPage> {
   const safePageSize = Math.min(100, Math.max(1, Math.floor(pageSize) || 10));
   const safePage = Math.max(1, Math.floor(page) || 1);
@@ -837,6 +846,26 @@ export async function listRecipientsPage(
     });
   }
 
+  const statusCounts = {
+    all: all.length,
+    sent: all.filter((e) => e.sentCount > 0).length,
+    pending: all.filter((e) => e.pendingCount > 0).length,
+    failed: all.filter((e) => e.failedCount > 0).length,
+  };
+
+  if (status === "sent") all = all.filter((e) => e.sentCount > 0);
+  else if (status === "pending") all = all.filter((e) => e.pendingCount > 0);
+  else if (status === "failed") all = all.filter((e) => e.failedCount > 0);
+
+  const statusKey =
+    status === "sent" ? "SENT" : status === "failed" ? "FAILED" : status === "pending" ? "PENDING" : null;
+  if (statusKey) {
+    all = all.map((entry) => ({
+      ...entry,
+      recentCampaigns: entry.recentCampaigns.filter((c) => c.recipientStatus === statusKey),
+    }));
+  }
+
   const total = all.length;
   const totalPages = Math.max(1, Math.ceil(total / safePageSize) || 1);
   const currentPage = Math.min(safePage, totalPages);
@@ -848,6 +877,7 @@ export async function listRecipientsPage(
     page: currentPage,
     pageSize: safePageSize,
     totalPages,
+    statusCounts,
   };
 }
 

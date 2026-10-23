@@ -146,7 +146,9 @@ export function InboxMessageModal({ uid, onClose, onChanged, onUseAsNew }: Props
 
   return createPortal(
     <div
-      className="fixed inset-0 z-[100] flex items-end justify-center sm:items-center sm:p-6"
+      data-overlay=""
+      className="flex items-center justify-center p-4 sm:p-6"
+      style={{ position: "fixed", inset: 0, zIndex: 500 }}
       role="dialog"
       aria-modal="true"
       aria-labelledby="inbox-message-title"

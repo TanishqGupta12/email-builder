@@ -15,7 +15,12 @@ export async function GET(req: Request) {
     pageSize: 10,
   });
   const q = url.searchParams.get("q")?.trim() || undefined;
-  const result = await listRecipientsPage(page, pageSize, q);
+  const statusRaw = url.searchParams.get("status") || "all";
+  const status =
+    statusRaw === "sent" || statusRaw === "pending" || statusRaw === "failed"
+      ? statusRaw
+      : "all";
+  const result = await listRecipientsPage(page, pageSize, q, status);
 
   return NextResponse.json({
     recipients: result.items.map((r) => ({
@@ -41,6 +46,7 @@ export async function GET(req: Request) {
       total: result.total,
       totalPages: result.totalPages,
     },
+    statusCounts: result.statusCounts,
   });
 }
 

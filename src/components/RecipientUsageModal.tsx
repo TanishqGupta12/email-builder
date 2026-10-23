@@ -104,10 +104,12 @@ export function RecipientUsageModal({
 
   return createPortal(
     <div
-      className="fixed inset-0 z-[110] flex items-end justify-center sm:items-center sm:p-6"
+      data-overlay=""
+      className="flex items-center justify-center p-4 sm:p-6"
       role="dialog"
       aria-modal="true"
       aria-labelledby="usage-timeline-title"
+      style={{ position: "fixed", inset: 0, zIndex: 500 }}
     >
       <button
         type="button"
@@ -116,8 +118,8 @@ export function RecipientUsageModal({
         onClick={onClose}
       />
       <div
-        className="relative z-10 flex w-full max-w-2xl flex-col overflow-hidden rounded-t-2xl bg-white shadow-[0_24px_64px_rgba(21,32,43,0.22)] sm:rounded-2xl"
-        style={{ maxHeight: "min(90dvh, 760px)" }}
+        className="relative z-10 flex w-full max-w-2xl flex-col overflow-hidden rounded-2xl bg-white shadow-[0_24px_64px_rgba(21,32,43,0.22)]"
+        style={{ maxHeight: "min(85dvh, 720px)" }}
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex shrink-0 items-start gap-3 border-b border-[var(--color-line)] px-4 py-3.5 sm:px-5">

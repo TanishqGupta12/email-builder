@@ -3,6 +3,7 @@
 import dynamic from "next/dynamic";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
+import { createPortal } from "react-dom";
 import {
   extractEmailsFromPaste,
   parseEmailPaste,
@@ -313,19 +314,24 @@ export function ComposerForm() {
 
   useEffect(() => {
     if (!lastCampaignId) return;
-    let cancelled = false;
+    let stopped = false;
+    let timer = 0;
     const tick = async () => {
+      if (stopped) return;
       const c = await pollCampaign(lastCampaignId);
-      if (cancelled || !c) return;
+      if (stopped || !c) return;
       setLiveCampaign(c);
       window.dispatchEvent(new Event("campaigns:refresh"));
-      if (c.status === "SENDING" || c.status === "QUEUED") {
-        setTimeout(tick, 1500);
+      if (c.status === "COMPLETED") {
+        stopped = true;
+        window.clearInterval(timer);
       }
     };
     void tick();
+    timer = window.setInterval(() => void tick(), 1000);
     return () => {
-      cancelled = true;
+      stopped = true;
+      window.clearInterval(timer);
     };
   }, [lastCampaignId, pollCampaign]);
 
@@ -361,6 +367,16 @@ export function ComposerForm() {
       }
 
       setLastCampaignId(data.id);
+      const count = Number(data.recipientCount) || 0;
+      setLiveCampaign({
+        id: data.id,
+        status: "QUEUED",
+        recipients: Array.from({ length: count }, (_, i) => ({
+          email: `pending-${i}`,
+          status: "PENDING",
+          errorMessage: null,
+        })),
+      });
       window.dispatchEvent(new Event("campaigns:refresh"));
       if (Array.isArray(data.invalid) && data.invalid.length) {
         setInvalidList(data.invalid);
@@ -374,8 +390,7 @@ export function ComposerForm() {
 
   return (
     <>
-      {liveCampaign && <CampaignStatusPanel campaign={liveCampaign} />}
-      <form onSubmit={onSubmit} className="min-w-0 space-y-6">
+      <form onSubmit={onSubmit} className="min-w-0 space-y-6 pb-28">
         {reuseNotice && <div className="ui-alert ui-alert-ok">{reuseNotice}</div>}
 
         <div className="grid gap-5 sm:grid-cols-2">
@@ -595,6 +610,19 @@ export function ComposerForm() {
           )}
         </div>
 
+        {(submitting || liveCampaign) && (
+          <CampaignStatusPanel
+            campaign={
+              liveCampaign ?? {
+                id: "starting",
+                status: "QUEUED",
+                recipients: [],
+              }
+            }
+            starting={submitting && !liveCampaign}
+          />
+        )}
+
         {error && <div className="ui-alert ui-alert-error">{error}</div>}
 
         {invalidList.length > 0 && (
@@ -634,29 +662,114 @@ export function ComposerForm() {
           onViewOther={(next) => setUsageEmail(next)}
         />
       )}
+
+      {(submitting || liveCampaign) && (
+        <SendProgressDock
+          campaign={liveCampaign}
+          starting={submitting && !liveCampaign}
+          onDismiss={
+            liveCampaign && liveCampaign.status === "COMPLETED"
+              ? () => {
+                  setLiveCampaign(null);
+                  setLastCampaignId(null);
+                }
+              : undefined
+          }
+        />
+      )}
     </>
   );
 }
 
-function CampaignStatusPanel({ campaign }: { campaign: CampaignDetail }) {
-  const counts = campaign.recipients.reduce(
-    (acc, r) => {
-      acc[r.status] = (acc[r.status] ?? 0) + 1;
-      return acc;
-    },
-    {} as Record<string, number>,
+function campaignCounts(campaign: CampaignDetail | null) {
+  const counts = { SENT: 0, FAILED: 0, PENDING: 0 };
+  for (const r of campaign?.recipients ?? []) {
+    if (r.status === "SENT") counts.SENT += 1;
+    else if (r.status === "FAILED") counts.FAILED += 1;
+    else counts.PENDING += 1;
+  }
+  const total = campaign?.recipients.length ?? 0;
+  const done = counts.SENT + counts.FAILED;
+  const progress = total > 0 ? Math.round((done / total) * 100) : 0;
+  return { ...counts, total, progress };
+}
+
+function SendProgressDock({
+  campaign,
+  starting,
+  onDismiss,
+}: {
+  campaign: CampaignDetail | null;
+  starting?: boolean;
+  onDismiss?: () => void;
+}) {
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
+  if (!mounted) return null;
+
+  const { SENT, FAILED, PENDING, total, progress } = campaignCounts(campaign);
+  const active = starting || campaign?.status === "QUEUED" || campaign?.status === "SENDING";
+
+  return createPortal(
+    <div
+      data-overlay=""
+      className="px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-2 sm:px-6"
+      style={{ position: "fixed", inset: "auto 0 0 0", zIndex: 450 }}
+    >
+      <div className="mx-auto max-w-3xl rounded-2xl border border-[var(--color-line)] bg-white/95 p-3 shadow-[0_-8px_32px_rgba(21,32,43,0.12)] backdrop-blur sm:p-4">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <p className="font-display text-sm font-semibold text-[var(--color-ink)]">
+              {starting ? "Starting send…" : active ? "Sending in real time" : "Send finished"}
+            </p>
+            <p className="text-xs text-[var(--color-ink-muted)]">
+              {total > 0
+                ? `${SENT + FAILED} of ${total} finished · ${progress}%`
+                : "Waiting for the first update"}
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="ui-chip">{starting ? "QUEUED" : campaign?.status ?? "QUEUED"}</span>
+            {onDismiss && (
+              <button type="button" className="ui-btn ui-btn-ghost !px-2.5 !py-1 text-xs" onClick={onDismiss}>
+                Close
+              </button>
+            )}
+          </div>
+        </div>
+        <div className="mt-3 h-2.5 overflow-hidden rounded-full bg-[#e2e8f0]">
+          <div
+            className="h-full rounded-full bg-[var(--color-accent)] transition-[width] duration-500 ease-out"
+            style={{ width: `${starting ? 8 : Math.max(progress, active ? 4 : 0)}%` }}
+          />
+        </div>
+        <div className="mt-3 grid grid-cols-3 gap-2 text-center">
+          <Stat label="Sent" value={SENT} tone="ok" />
+          <Stat label="Pending" value={PENDING} tone="warn" />
+          <Stat label="Failed" value={FAILED} tone="danger" />
+        </div>
+      </div>
+    </div>,
+    document.body,
   );
-  const sent = counts.SENT ?? 0;
-  const failed = counts.FAILED ?? 0;
-  const pending = counts.PENDING ?? 0;
-  const total = campaign.recipients.length;
-  const progress = total > 0 ? Math.round(((sent + failed) / total) * 100) : 0;
+}
+
+function CampaignStatusPanel({
+  campaign,
+  starting,
+}: {
+  campaign: CampaignDetail;
+  starting?: boolean;
+}) {
+  const { SENT: sent, FAILED: failed, PENDING: pending, total, progress } = campaignCounts(campaign);
 
   return (
-    <div className="mb-6 rounded-xl border border-[var(--color-line)] bg-[#f8fafc] p-4 sm:p-5">
+    <div className="rounded-xl border border-[var(--color-line)] bg-[#f8fafc] p-4 sm:p-5">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <h3 className="font-display text-sm font-semibold text-[var(--color-ink)]">Live send</h3>
-        <span className="ui-chip">{campaign.status}</span>
+        <h3 className="font-display text-sm font-semibold text-[var(--color-ink)]">
+          {starting ? "Starting send…" : "Live progress"}
+        </h3>
+        <span className="ui-chip">{starting ? "QUEUED" : campaign.status}</span>
       </div>
       <p className="mt-2 text-xs text-[var(--color-ink-muted)]">
         {total} recipient{total === 1 ? "" : "s"} · {progress}% finished

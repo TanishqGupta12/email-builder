@@ -29,6 +29,15 @@ type RecipientRow = {
   recentCampaigns: RecentCampaign[];
 };
 
+type StatusFilter = "all" | "sent" | "pending" | "failed";
+
+type StatusCounts = {
+  all: number;
+  sent: number;
+  pending: number;
+  failed: number;
+};
+
 type Pagination = {
   page: number;
   pageSize: number;
@@ -62,13 +71,26 @@ export function RecipientsList() {
   const [actionOk, setActionOk] = useState<string | null>(null);
   const [qDraft, setQDraft] = useState("");
   const [q, setQ] = useState("");
+  const [status, setStatus] = useState<StatusFilter>("all");
+  const [statusCounts, setStatusCounts] = useState<StatusCounts>({
+    all: 0,
+    sent: 0,
+    pending: 0,
+    failed: 0,
+  });
 
   const load = useCallback(
-    async (page = pagination.page, pageSize = pagination.pageSize, query = q) => {
+    async (
+      page = pagination.page,
+      pageSize = pagination.pageSize,
+      query = q,
+      statusFilter = status,
+    ) => {
       try {
         const params = new URLSearchParams({
           page: String(page),
           pageSize: String(pageSize),
+          status: statusFilter,
         });
         if (query.trim()) params.set("q", query.trim());
         const res = await fetch(`/api/recipients?${params}`);
@@ -88,6 +110,7 @@ export function RecipientsList() {
           total: p.total,
           totalPages: p.totalPages,
         });
+        if (data.statusCounts) setStatusCounts(data.statusCounts as StatusCounts);
         setSelected((prev) => {
           const emails = new Set(mapped.map((r) => r.email.toLowerCase()));
           return new Set([...prev].filter((e) => emails.has(e.toLowerCase())));
@@ -97,13 +120,13 @@ export function RecipientsList() {
         setRows([]);
       }
     },
-    [pagination.page, pagination.pageSize, q],
+    [pagination.page, pagination.pageSize, q, status],
   );
 
   useEffect(() => {
-    void load(1, pagination.pageSize, q);
+    void load(1, pagination.pageSize, q, status);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [q]);
+  }, [q, status]);
 
   const allSelected = useMemo(
     () =>
@@ -300,6 +323,35 @@ export function RecipientsList() {
             {pagination.total === 1 ? "" : "s"}
           </p>
         ) : null}
+        <div className="mt-3 flex flex-wrap gap-2" role="tablist" aria-label="Filter by status">
+          {(
+            [
+              { id: "all", label: "All", count: statusCounts.all, tone: "" },
+              { id: "sent", label: "Sent", count: statusCounts.sent, tone: "text-[var(--color-ok)]" },
+              { id: "pending", label: "Pending", count: statusCounts.pending, tone: "text-[var(--color-warn)]" },
+              { id: "failed", label: "Failed", count: statusCounts.failed, tone: "text-[var(--color-danger)]" },
+            ] as const
+          ).map((item) => (
+            <button
+              key={item.id}
+              type="button"
+              role="tab"
+              aria-selected={status === item.id}
+              disabled={busy}
+              onClick={() => setStatus(item.id)}
+              className={`rounded-full border px-3 py-1.5 text-xs font-semibold transition ${
+                status === item.id
+                  ? "border-[var(--color-accent)] bg-[var(--color-accent-soft)] text-[var(--color-ink)]"
+                  : "border-[var(--color-line)] bg-white text-[var(--color-ink-muted)] hover:border-[var(--color-accent)]"
+              }`}
+            >
+              {item.label}
+              <span className={`ml-1.5 tabular-nums ${status === item.id ? item.tone : ""}`}>
+                {item.count}
+              </span>
+            </button>
+          ))}
+        </div>
       </div>
 
       <div className="flex flex-col gap-3 border-b border-[var(--color-line)] px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-5">
@@ -346,12 +398,18 @@ export function RecipientsList() {
       {rows.length === 0 ? (
         <div className="px-4 py-12 text-center sm:px-6">
           <p className="font-display text-base font-semibold text-[var(--color-ink)]">
-            {q ? "No matches" : "No recipients yet"}
+            {q || status !== "all" ? "No matches" : "No recipients yet"}
           </p>
           <p className="mt-1 text-sm text-[var(--color-ink-muted)]">
-            {q
-              ? "Try another email, subject, or sender keyword."
-              : "Addresses you send to will appear here for reuse and follow-up."}
+            {status === "sent"
+              ? "No recipients with a successful send."
+              : status === "pending"
+                ? "No recipients still pending."
+                : status === "failed"
+                  ? "No failed recipients."
+                  : q
+                    ? "Try another email, subject, or sender keyword."
+                    : "Addresses you send to will appear here for reuse and follow-up."}
           </p>
         </div>
       ) : (
@@ -458,8 +516,8 @@ export function RecipientsList() {
         total={pagination.total}
         totalPages={pagination.totalPages}
         disabled={busy}
-        onPageChange={(page) => void load(page, pagination.pageSize, q)}
-        onPageSizeChange={(pageSize) => void load(1, pageSize, q)}
+        onPageChange={(page) => void load(page, pagination.pageSize, q, status)}
+        onPageSizeChange={(pageSize) => void load(1, pageSize, q, status)}
       />
 
       {viewId && (

@@ -49,9 +49,15 @@ body {
   z-index: 0;
 }
 
-.app-shell > * {
+.app-shell > *:not([data-overlay]) {
   position: relative;
   z-index: 1;
+}
+
+.app-shell > [data-overlay] {
+  position: fixed;
+  inset: 0;
+  z-index: 400;
 }
 
 .font-display {
