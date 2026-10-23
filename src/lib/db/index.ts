@@ -101,6 +101,51 @@ CREATE INDEX IF NOT EXISTS mail_scheduled_account_idx ON mail_scheduled(account_
 CREATE INDEX IF NOT EXISTS mail_scheduled_send_at_idx ON mail_scheduled(send_at);
 CREATE INDEX IF NOT EXISTS mail_snoozed_account_idx ON mail_snoozed(account_email);
 CREATE INDEX IF NOT EXISTS mail_snoozed_wake_at_idx ON mail_snoozed(wake_at);
+
+CREATE TABLE IF NOT EXISTS wa_connection (
+  id TEXT PRIMARY KEY,
+  phone_number_id TEXT NOT NULL,
+  access_token TEXT NOT NULL,
+  template_name TEXT NOT NULL,
+  template_language TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS wa_broadcasts (
+  id TEXT PRIMARY KEY,
+  message TEXT NOT NULL,
+  delay_ms INTEGER NOT NULL,
+  status TEXT NOT NULL,
+  invalid_numbers TEXT,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS wa_recipients (
+  id TEXT PRIMARY KEY,
+  broadcast_id TEXT NOT NULL REFERENCES wa_broadcasts(id) ON DELETE CASCADE,
+  phone TEXT NOT NULL,
+  status TEXT NOT NULL,
+  error_message TEXT,
+  sent_at INTEGER,
+  created_at INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS wa_attachments (
+  id TEXT PRIMARY KEY,
+  broadcast_id TEXT NOT NULL REFERENCES wa_broadcasts(id) ON DELETE CASCADE,
+  filename TEXT NOT NULL,
+  original_name TEXT NOT NULL,
+  mime_type TEXT NOT NULL,
+  size INTEGER NOT NULL,
+  path TEXT NOT NULL,
+  content_base64 TEXT
+);
+
+CREATE INDEX IF NOT EXISTS wa_recipients_broadcast_id_idx ON wa_recipients(broadcast_id);
+CREATE INDEX IF NOT EXISTS wa_attachments_broadcast_id_idx ON wa_attachments(broadcast_id);
+CREATE INDEX IF NOT EXISTS wa_broadcasts_created_at_idx ON wa_broadcasts(created_at);
 `;
 
 export type AppDatabase = LibSQLDatabase<typeof schema>;
@@ -158,6 +203,71 @@ async function ensureAttachmentContentColumn(
   }
 }
 
+const globalForWaSchema = globalThis as unknown as {
+  __waSchemaReady?: Promise<void>;
+};
+
+async function ensureWhatsappTables(db: AppDatabase): Promise<void> {
+  if (!globalForWaSchema.__waSchemaReady) {
+    const client = (db as unknown as { $client: ReturnType<typeof createClient> }).$client;
+    globalForWaSchema.__waSchemaReady = client
+      .executeMultiple(
+        `
+CREATE TABLE IF NOT EXISTS wa_connection (
+  id TEXT PRIMARY KEY,
+  phone_number_id TEXT NOT NULL,
+  access_token TEXT NOT NULL,
+  template_name TEXT NOT NULL,
+  template_language TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS wa_broadcasts (
+  id TEXT PRIMARY KEY,
+  message TEXT NOT NULL,
+  delay_ms INTEGER NOT NULL,
+  status TEXT NOT NULL,
+  invalid_numbers TEXT,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS wa_recipients (
+  id TEXT PRIMARY KEY,
+  broadcast_id TEXT NOT NULL REFERENCES wa_broadcasts(id) ON DELETE CASCADE,
+  phone TEXT NOT NULL,
+  status TEXT NOT NULL,
+  error_message TEXT,
+  sent_at INTEGER,
+  created_at INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS wa_attachments (
+  id TEXT PRIMARY KEY,
+  broadcast_id TEXT NOT NULL REFERENCES wa_broadcasts(id) ON DELETE CASCADE,
+  filename TEXT NOT NULL,
+  original_name TEXT NOT NULL,
+  mime_type TEXT NOT NULL,
+  size INTEGER NOT NULL,
+  path TEXT NOT NULL,
+  content_base64 TEXT
+);
+
+CREATE INDEX IF NOT EXISTS wa_recipients_broadcast_id_idx ON wa_recipients(broadcast_id);
+CREATE INDEX IF NOT EXISTS wa_attachments_broadcast_id_idx ON wa_attachments(broadcast_id);
+CREATE INDEX IF NOT EXISTS wa_broadcasts_created_at_idx ON wa_broadcasts(created_at);
+`,
+      )
+      .then(() => undefined)
+      .catch((error: unknown) => {
+        globalForWaSchema.__waSchemaReady = undefined;
+        throw error;
+      });
+  }
+  await globalForWaSchema.__waSchemaReady;
+}
+
 export function getDb(): Promise<AppDatabase> {
   if (!globalForDb.__emailBuilderDb) {
     globalForDb.__emailBuilderDb = openDatabase().catch((error: unknown) => {
@@ -165,5 +275,8 @@ export function getDb(): Promise<AppDatabase> {
       throw error;
     });
   }
-  return globalForDb.__emailBuilderDb;
+  return globalForDb.__emailBuilderDb.then(async (db) => {
+    await ensureWhatsappTables(db);
+    return db;
+  });
 }

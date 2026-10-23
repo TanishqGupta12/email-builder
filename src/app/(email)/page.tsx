@@ -1,11 +1,8 @@
-import { AppNav } from "@/components/AppNav";
 import { ComposerForm } from "@/components/ComposerForm";
 
 export default function Home() {
   return (
-    <>
-      <AppNav />
-      <main className="mx-auto flex w-full min-w-0 max-w-5xl flex-col gap-10 px-4 py-8 sm:gap-12 sm:px-6 sm:py-10 lg:px-8 lg:py-12">
+    <main className="mx-auto flex w-full min-w-0 max-w-5xl flex-col gap-10 px-4 py-8 sm:gap-12 sm:px-6 sm:py-10 lg:px-8 lg:py-12">
         <section className="rise-in grid gap-6 lg:grid-cols-[1.15fr_0.85fr] lg:items-end">
           <div>
             <h1 className="font-display max-w-xl text-balance text-4xl font-semibold tracking-tight text-[var(--color-ink)] sm:text-5xl">
@@ -50,7 +47,6 @@ export default function Home() {
             <ComposerForm />
           </div>
         </section>
-      </main>
-    </>
+    </main>
   );
 }

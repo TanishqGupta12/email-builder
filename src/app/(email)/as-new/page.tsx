@@ -1,4 +1,3 @@
-import { AppNav } from "@/components/AppNav";
 import { MailApp } from "@/components/mail/MailApp";
 
 export const metadata = {
@@ -7,9 +6,7 @@ export const metadata = {
 
 export default function AsNewPage() {
   return (
-    <>
-      <AppNav />
-      <main className="mx-auto flex w-full min-w-0 max-w-[1400px] flex-col gap-4 px-3 py-4 sm:px-5 sm:py-6 lg:px-6">
+    <main className="mx-auto flex w-full min-w-0 max-w-[1400px] flex-col gap-4 px-3 py-4 sm:px-5 sm:py-6 lg:px-6">
         <header className="rise-in px-1">
           <h1 className="font-display text-2xl font-semibold tracking-tight text-[var(--color-ink)] sm:text-3xl">
             Mail
@@ -22,7 +19,6 @@ export default function AsNewPage() {
         <div className="rise-in rise-in-delay-1 min-h-0">
           <MailApp />
         </div>
-      </main>
-    </>
+    </main>
   );
 }

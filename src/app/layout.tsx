@@ -1,6 +1,5 @@
 import type { Metadata, Viewport } from "next";
 import { IBM_Plex_Mono, IBM_Plex_Sans, Outfit } from "next/font/google";
-import { SendProgressProvider } from "@/components/SendProgressProvider";
 import "./globals.css";
 
 const display = Outfit({
@@ -44,7 +43,7 @@ export default function RootLayout({
       className={`${display.variable} ${body.variable} ${mono.variable} h-full antialiased`}
     >
       <body className="app-shell min-h-full overflow-x-hidden [padding-bottom:env(safe-area-inset-bottom)]">
-        <SendProgressProvider>{children}</SendProgressProvider>
+        {children}
       </body>
     </html>
   );

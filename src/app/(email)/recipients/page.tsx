@@ -1,4 +1,3 @@
-import { AppNav } from "@/components/AppNav";
 import { RecipientsList } from "@/components/RecipientsList";
 
 export const metadata = {
@@ -7,9 +6,7 @@ export const metadata = {
 
 export default function RecipientsPage() {
   return (
-    <>
-      <AppNav />
-      <main className="mx-auto flex w-full min-w-0 max-w-5xl flex-col gap-6 px-4 py-8 sm:px-6 sm:py-10 lg:px-8">
+    <main className="mx-auto flex w-full min-w-0 max-w-5xl flex-col gap-6 px-4 py-8 sm:px-6 sm:py-10 lg:px-8">
         <header className="rise-in">
           <h1 className="font-display text-3xl font-semibold tracking-tight text-[var(--color-ink)] sm:text-4xl">
             Recipients
@@ -22,7 +19,6 @@ export default function RecipientsPage() {
         <div className="rise-in rise-in-delay-1 ui-panel overflow-hidden">
           <RecipientsList />
         </div>
-      </main>
-    </>
+    </main>
   );
 }

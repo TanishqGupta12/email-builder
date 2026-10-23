@@ -94,3 +94,10 @@ export const mailSnoozed = sqliteTable("mail_snoozed", {
   wakeAt: integer("wake_at", { mode: "timestamp_ms" }).notNull(),
   createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
 });
+
+export {
+  waAttachments,
+  waBroadcasts,
+  waConnection,
+  waRecipients,
+} from "@/lib/whatsapp/schema";

@@ -26,6 +26,12 @@ export function AppNav() {
           </p>
         </Link>
         <nav className="flex shrink-0 items-center gap-1 text-xs font-semibold sm:gap-1.5 sm:text-sm">
+          <Link
+            href="/whatsapp"
+            className="mr-1 rounded-lg bg-[#075e54] px-2.5 py-1.5 text-white no-underline shadow-sm transition hover:bg-[#054840] sm:mr-2 sm:px-3"
+          >
+            WhatsApp
+          </Link>
           {links.map((link) => {
             const active =
               link.href === "/"
