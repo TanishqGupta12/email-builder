@@ -14,17 +14,26 @@ export function isValidEmail(email: string): boolean {
  * Strips HTML first, then works line/segment-wise so pasting a full email body
  * (with many tags) does not extract dozens of false addresses from markup.
  */
-export function parseEmailPaste(raw: string): string[] {
+export type RecipientParseStats = {
+  emails: string[];
+  duplicateCount: number;
+};
+
+export function parseEmailPasteStats(raw: string): RecipientParseStats {
   const seen = new Set<string>();
-  const out: string[] = [];
+  const emails: string[] = [];
+  let duplicateCount = 0;
 
   const add = (candidate: string) => {
     const e = candidate.trim();
     if (!isValidEmail(e)) return;
     const k = e.toLowerCase();
-    if (seen.has(k)) return;
+    if (seen.has(k)) {
+      duplicateCount += 1;
+      return;
+    }
     seen.add(k);
-    out.push(e);
+    emails.push(e);
   };
 
   const plain = raw.replace(/<[^>]+>/g, "\n");
@@ -45,7 +54,11 @@ export function parseEmailPaste(raw: string): string[] {
       }
     }
   }
-  return out;
+  return { emails, duplicateCount };
+}
+
+export function parseEmailPaste(raw: string): string[] {
+  return parseEmailPasteStats(raw).emails;
 }
 
 /** Same rules as parseEmailPaste — used for clipboard paste into recipients. */
@@ -53,10 +66,10 @@ export function extractEmailsFromPaste(raw: string): string[] {
   return parseEmailPaste(raw);
 }
 
-export function extractEmailsFromCsvText(text: string): string[] {
+export function extractEmailsFromCsvStats(text: string): RecipientParseStats {
   const parsed = Papa.parse<string[]>(text, { skipEmptyLines: true });
   const rows = parsed.data.filter((r) => r.some((c) => String(c).trim()));
-  if (rows.length === 0) return [];
+  if (rows.length === 0) return { emails: [], duplicateCount: 0 };
 
   const header = rows[0].map((c) => String(c).toLowerCase().trim());
   let col = header.findIndex((h) => h === "email" || h === "e-mail" || h === "mail");
@@ -66,15 +79,60 @@ export function extractEmailsFromCsvText(text: string): string[] {
     header[col] === "email" || header[col] === "e-mail" || header[col] === "mail";
   const start = headerLooksLikeEmailColumn ? 1 : 0;
 
-  const out: string[] = [];
+  const seen = new Set<string>();
+  const emails: string[] = [];
+  let duplicateCount = 0;
   for (let i = start; i < rows.length; i++) {
     const row = rows[i];
     const cell = row[col];
-    if (cell != null && String(cell).trim()) {
-      out.push(String(cell).trim());
+    if (cell == null) continue;
+    const value = String(cell).trim();
+    if (!value) continue;
+    const key = value.toLowerCase();
+    if (seen.has(key)) {
+      if (isValidEmail(value)) duplicateCount += 1;
+      continue;
+    }
+    seen.add(key);
+    emails.push(value);
+  }
+  return { emails, duplicateCount };
+}
+
+export function extractEmailsFromCsvText(text: string): string[] {
+  return extractEmailsFromCsvStats(text).emails;
+}
+
+/** Unique valid addresses, plus how many extra copies were skipped. */
+export function mergeRecipientStats(sources: RecipientParseStats[]): {
+  valid: string[];
+  invalid: string[];
+  duplicateCount: number;
+} {
+  const seen = new Set<string>();
+  const valid: string[] = [];
+  const invalid: string[] = [];
+  let duplicateCount = sources.reduce((sum, source) => sum + source.duplicateCount, 0);
+
+  for (const source of sources) {
+    for (const raw of source.emails) {
+      const value = raw.trim();
+      if (!value) continue;
+      if (!isValidEmail(value)) {
+        invalid.push(value);
+        continue;
+      }
+      const key = value.toLowerCase();
+      if (seen.has(key)) {
+        duplicateCount += 1;
+        continue;
+      }
+      seen.add(key);
+      valid.push(key);
     }
   }
-  return [...new Set(out)];
+
+  return { valid, invalid, duplicateCount };
 }
 
 export function partitionEmails(rawList: string[]): {

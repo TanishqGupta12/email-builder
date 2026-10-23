@@ -3,7 +3,6 @@
 import dynamic from "next/dynamic";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
-import { createPortal } from "react-dom";
 import {
   extractEmailsFromPaste,
   parseEmailPaste,
@@ -11,6 +10,7 @@ import {
 } from "@/lib/recipients";
 import type { CampaignReusePayload } from "@/components/CampaignDetailModal";
 import { RecipientUsageModal } from "@/components/RecipientUsageModal";
+import { CampaignStatusPanel, useSendProgress } from "@/components/SendProgressProvider";
 import { COMPOSER_REUSE_KEY } from "@/lib/composer-reuse";
 
 type PriorUseHit = {
@@ -30,12 +30,6 @@ const RichTextEditor = dynamic(
   },
 );
 
-type CampaignDetail = {
-  id: string;
-  status: string;
-  recipients: { email: string; status: string; errorMessage: string | null }[];
-};
-
 export function ComposerForm() {
   const [defaultSender, setDefaultSender] = useState("");
   const [senderEmail, setSenderEmail] = useState("");
@@ -49,8 +43,7 @@ export function ComposerForm() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [invalidList, setInvalidList] = useState<string[]>([]);
-  const [lastCampaignId, setLastCampaignId] = useState<string | null>(null);
-  const [liveCampaign, setLiveCampaign] = useState<CampaignDetail | null>(null);
+  const { campaign: liveCampaign, starting: sendStarting, startSend } = useSendProgress();
   const recipientsRef = useRef<HTMLTextAreaElement>(null);
   const csvInputRef = useRef<HTMLInputElement>(null);
   const attachmentsInputRef = useRef<HTMLInputElement>(null);
@@ -301,40 +294,6 @@ export function ComposerForm() {
     return () => window.removeEventListener("composer:reuse", onReuse);
   }, [applyReuse]);
 
-  const pollCampaign = useCallback(async (id: string) => {
-    try {
-      const res = await fetch(`/api/campaigns/${id}`);
-      if (!res.ok) return null;
-      const data = await res.json();
-      return data.campaign as CampaignDetail;
-    } catch {
-      return null;
-    }
-  }, []);
-
-  useEffect(() => {
-    if (!lastCampaignId) return;
-    let stopped = false;
-    let timer = 0;
-    const tick = async () => {
-      if (stopped) return;
-      const c = await pollCampaign(lastCampaignId);
-      if (stopped || !c) return;
-      setLiveCampaign(c);
-      window.dispatchEvent(new Event("campaigns:refresh"));
-      if (c.status === "COMPLETED") {
-        stopped = true;
-        window.clearInterval(timer);
-      }
-    };
-    void tick();
-    timer = window.setInterval(() => void tick(), 1000);
-    return () => {
-      stopped = true;
-      window.clearInterval(timer);
-    };
-  }, [lastCampaignId, pollCampaign]);
-
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (submitting) return;
@@ -342,55 +301,32 @@ export function ComposerForm() {
     setReuseNotice(null);
     setInvalidList([]);
     setSubmitting(true);
-    setLiveCampaign(null);
 
-    try {
-      const fd = new FormData();
-      fd.set("senderEmail", senderEmail);
-      fd.set("subject", subject);
-      fd.set("bodyHtml", bodyHtml);
-      fd.set("recipientsText", recipientsText);
-      fd.set("sendMode", sendMode);
-      fd.set("delaySeconds", String(delaySeconds));
-      if (csvFile) fd.set("csvFile", csvFile);
-      for (const f of files) {
-        fd.append("attachments", f);
-      }
-
-      const res = await fetch("/api/campaigns", { method: "POST", body: fd });
-      const data = await res.json();
-
-      if (!res.ok) {
-        setError(data.error ?? "Request failed");
-        if (Array.isArray(data.invalid)) setInvalidList(data.invalid);
-        return;
-      }
-
-      setLastCampaignId(data.id);
-      const count = Number(data.recipientCount) || 0;
-      setLiveCampaign({
-        id: data.id,
-        status: "QUEUED",
-        recipients: Array.from({ length: count }, (_, i) => ({
-          email: `pending-${i}`,
-          status: "PENDING",
-          errorMessage: null,
-        })),
-      });
-      window.dispatchEvent(new Event("campaigns:refresh"));
-      if (Array.isArray(data.invalid) && data.invalid.length) {
-        setInvalidList(data.invalid);
-      }
-    } catch {
-      setError("Network error");
-    } finally {
-      setSubmitting(false);
+    const fd = new FormData();
+    fd.set("senderEmail", senderEmail);
+    fd.set("subject", subject);
+    fd.set("bodyHtml", bodyHtml);
+    fd.set("recipientsText", recipientsText);
+    fd.set("sendMode", sendMode);
+    fd.set("delaySeconds", String(delaySeconds));
+    if (csvFile) fd.set("csvFile", csvFile);
+    for (const f of files) {
+      fd.append("attachments", f);
     }
+
+    const result = await startSend(fd, subject);
+    setSubmitting(false);
+    if (!result.ok) {
+      setError(result.error);
+      if (result.invalid?.length) setInvalidList(result.invalid);
+      return;
+    }
+    if (result.invalid?.length) setInvalidList(result.invalid);
   }
 
   return (
     <>
-      <form onSubmit={onSubmit} className="min-w-0 space-y-6 pb-28">
+      <form onSubmit={onSubmit} className="min-w-0 space-y-6">
         {reuseNotice && <div className="ui-alert ui-alert-ok">{reuseNotice}</div>}
 
         <div className="grid gap-5 sm:grid-cols-2">
@@ -610,7 +546,7 @@ export function ComposerForm() {
           )}
         </div>
 
-        {(submitting || liveCampaign) && (
+        {(submitting || sendStarting || liveCampaign) && (
           <CampaignStatusPanel
             campaign={
               liveCampaign ?? {
@@ -619,7 +555,7 @@ export function ComposerForm() {
                 recipients: [],
               }
             }
-            starting={submitting && !liveCampaign}
+            starting={(submitting || sendStarting) && !liveCampaign}
           />
         )}
 
@@ -663,167 +599,6 @@ export function ComposerForm() {
         />
       )}
 
-      {(submitting || liveCampaign) && (
-        <SendProgressDock
-          campaign={liveCampaign}
-          starting={submitting && !liveCampaign}
-          onDismiss={
-            liveCampaign && liveCampaign.status === "COMPLETED"
-              ? () => {
-                  setLiveCampaign(null);
-                  setLastCampaignId(null);
-                }
-              : undefined
-          }
-        />
-      )}
     </>
-  );
-}
-
-function campaignCounts(campaign: CampaignDetail | null) {
-  const counts = { SENT: 0, FAILED: 0, PENDING: 0 };
-  for (const r of campaign?.recipients ?? []) {
-    if (r.status === "SENT") counts.SENT += 1;
-    else if (r.status === "FAILED") counts.FAILED += 1;
-    else counts.PENDING += 1;
-  }
-  const total = campaign?.recipients.length ?? 0;
-  const done = counts.SENT + counts.FAILED;
-  const progress = total > 0 ? Math.round((done / total) * 100) : 0;
-  return { ...counts, total, progress };
-}
-
-function SendProgressDock({
-  campaign,
-  starting,
-  onDismiss,
-}: {
-  campaign: CampaignDetail | null;
-  starting?: boolean;
-  onDismiss?: () => void;
-}) {
-  const [mounted, setMounted] = useState(false);
-  useEffect(() => setMounted(true), []);
-  if (!mounted) return null;
-
-  const { SENT, FAILED, PENDING, total, progress } = campaignCounts(campaign);
-  const active = starting || campaign?.status === "QUEUED" || campaign?.status === "SENDING";
-
-  return createPortal(
-    <div
-      data-overlay=""
-      className="px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-2 sm:px-6"
-      style={{ position: "fixed", inset: "auto 0 0 0", zIndex: 450 }}
-    >
-      <div className="mx-auto max-w-3xl rounded-2xl border border-[var(--color-line)] bg-white/95 p-3 shadow-[0_-8px_32px_rgba(21,32,43,0.12)] backdrop-blur sm:p-4">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <div>
-            <p className="font-display text-sm font-semibold text-[var(--color-ink)]">
-              {starting ? "Starting send…" : active ? "Sending in real time" : "Send finished"}
-            </p>
-            <p className="text-xs text-[var(--color-ink-muted)]">
-              {total > 0
-                ? `${SENT + FAILED} of ${total} finished · ${progress}%`
-                : "Waiting for the first update"}
-            </p>
-          </div>
-          <div className="flex items-center gap-2">
-            <span className="ui-chip">{starting ? "QUEUED" : campaign?.status ?? "QUEUED"}</span>
-            {onDismiss && (
-              <button type="button" className="ui-btn ui-btn-ghost !px-2.5 !py-1 text-xs" onClick={onDismiss}>
-                Close
-              </button>
-            )}
-          </div>
-        </div>
-        <div className="mt-3 h-2.5 overflow-hidden rounded-full bg-[#e2e8f0]">
-          <div
-            className="h-full rounded-full bg-[var(--color-accent)] transition-[width] duration-500 ease-out"
-            style={{ width: `${starting ? 8 : Math.max(progress, active ? 4 : 0)}%` }}
-          />
-        </div>
-        <div className="mt-3 grid grid-cols-3 gap-2 text-center">
-          <Stat label="Sent" value={SENT} tone="ok" />
-          <Stat label="Pending" value={PENDING} tone="warn" />
-          <Stat label="Failed" value={FAILED} tone="danger" />
-        </div>
-      </div>
-    </div>,
-    document.body,
-  );
-}
-
-function CampaignStatusPanel({
-  campaign,
-  starting,
-}: {
-  campaign: CampaignDetail;
-  starting?: boolean;
-}) {
-  const { SENT: sent, FAILED: failed, PENDING: pending, total, progress } = campaignCounts(campaign);
-
-  return (
-    <div className="rounded-xl border border-[var(--color-line)] bg-[#f8fafc] p-4 sm:p-5">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <h3 className="font-display text-sm font-semibold text-[var(--color-ink)]">
-          {starting ? "Starting send…" : "Live progress"}
-        </h3>
-        <span className="ui-chip">{starting ? "QUEUED" : campaign.status}</span>
-      </div>
-      <p className="mt-2 text-xs text-[var(--color-ink-muted)]">
-        {total} recipient{total === 1 ? "" : "s"} · {progress}% finished
-      </p>
-      <div className="mt-3 h-1.5 overflow-hidden rounded bg-[#e2e8f0]">
-        <div
-          className="h-full rounded bg-[var(--color-accent)] transition-[width] duration-500 ease-out"
-          style={{ width: `${progress}%` }}
-        />
-      </div>
-      <div className="mt-4 grid grid-cols-3 gap-2 text-center">
-        <Stat label="Sent" value={sent} tone="ok" />
-        <Stat label="Pending" value={pending} tone="warn" />
-        <Stat label="Failed" value={failed} tone="danger" />
-      </div>
-      {failed > 0 && (
-        <div className="mt-4 max-h-36 overflow-auto rounded-lg border border-[#fecdca] bg-[#fef3f2] p-3 text-xs text-[#912018]">
-          <p className="font-semibold">Errors</p>
-          <ul className="mt-2 space-y-1 font-mono">
-            {campaign.recipients
-              .filter((r) => r.status === "FAILED")
-              .map((r) => (
-                <li key={r.email}>
-                  {r.email}: {r.errorMessage ?? "Unknown error"}
-                </li>
-              ))}
-          </ul>
-        </div>
-      )}
-    </div>
-  );
-}
-
-function Stat({
-  label,
-  value,
-  tone,
-}: {
-  label: string;
-  value: number;
-  tone: "ok" | "warn" | "danger";
-}) {
-  const color =
-    tone === "ok"
-      ? "text-[var(--color-ok)]"
-      : tone === "warn"
-        ? "text-[var(--color-warn)]"
-        : "text-[var(--color-danger)]";
-  return (
-    <div className="rounded-lg border border-[var(--color-line)] bg-white py-2.5">
-      <div className={`text-xl font-semibold tabular-nums ${color}`}>{value}</div>
-      <div className="text-[10px] font-semibold uppercase tracking-wide text-[var(--color-ink-muted)]">
-        {label}
-      </div>
-    </div>
   );
 }

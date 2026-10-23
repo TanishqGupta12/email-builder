@@ -11,9 +11,9 @@ import {
 } from "@/lib/campaign-store";
 import { parsePageParams } from "@/lib/pagination";
 import {
-  extractEmailsFromCsvText,
-  parseEmailPaste,
-  partitionEmails,
+  extractEmailsFromCsvStats,
+  mergeRecipientStats,
+  parseEmailPasteStats,
 } from "@/lib/recipients";
 import { sendCampaignEmails } from "@/lib/send-campaign";
 import { saveAttachment } from "@/lib/uploads";
@@ -112,15 +112,15 @@ export async function POST(req: Request) {
   const delaySeconds = Number(form.get("delaySeconds") ?? 0);
 
   const csvFile = form.get("csvFile");
-  let csvEmails: string[] = [];
-  if (csvFile instanceof File && csvFile.size > 0) {
-    const text = await csvFile.text();
-    csvEmails = extractEmailsFromCsvText(text);
-  }
+  const csvStats =
+    csvFile instanceof File && csvFile.size > 0
+      ? extractEmailsFromCsvStats(await csvFile.text())
+      : { emails: [], duplicateCount: 0 };
 
-  const pasteEmails = parseEmailPaste(recipientsText);
-  const combined = [...new Set([...pasteEmails, ...csvEmails])];
-  const { valid, invalid } = partitionEmails(combined);
+  const { valid, invalid, duplicateCount } = mergeRecipientStats([
+    parseEmailPasteStats(recipientsText),
+    csvStats,
+  ]);
 
   if (!senderEmail || !subject || !bodyHtml.replace(/<[^>]*>/g, "").trim()) {
     return NextResponse.json(
@@ -176,6 +176,7 @@ export async function POST(req: Request) {
     id: campaign.id,
     invalidCount: invalid.length,
     invalid,
+    duplicateCount,
     recipientCount: valid.length,
   });
 }
