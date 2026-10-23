@@ -63,7 +63,7 @@ export function RecipientsList() {
   });
   const [loadError, setLoadError] = useState(false);
   const [expanded, setExpanded] = useState<string | null>(null);
-  const [viewId, setViewId] = useState<string | null>(null);
+  const [view, setView] = useState<{ campaignId: string; email: string } | null>(null);
   const [busyKey, setBusyKey] = useState<string | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState(false);
@@ -485,7 +485,7 @@ export function RecipientsList() {
                           <div className="flex gap-2">
                             <button
                               type="button"
-                              onClick={() => setViewId(c.campaignId)}
+                              onClick={() => setView({ campaignId: c.campaignId, email: r.email })}
                               className="ui-btn ui-btn-ghost"
                             >
                               View
@@ -520,10 +520,11 @@ export function RecipientsList() {
         onPageSizeChange={(pageSize) => void load(1, pageSize, q, status)}
       />
 
-      {viewId && (
+      {view && (
         <CampaignDetailModal
-          campaignId={viewId}
-          onClose={() => setViewId(null)}
+          campaignId={view.campaignId}
+          focusEmail={view.email}
+          onClose={() => setView(null)}
           onReuse={onReuse}
           onRetried={() => void load()}
         />

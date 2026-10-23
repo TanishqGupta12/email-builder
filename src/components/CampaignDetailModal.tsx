@@ -36,12 +36,20 @@ type CampaignFull = {
 
 type Props = {
   campaignId: string;
+  /** When set, the dialog shows only this recipient — not the rest of the campaign. */
+  focusEmail?: string;
   onClose: () => void;
   onReuse: (payload: CampaignReusePayload) => void;
   onRetried?: () => void;
 };
 
-export function CampaignDetailModal({ campaignId, onClose, onReuse, onRetried }: Props) {
+export function CampaignDetailModal({
+  campaignId,
+  focusEmail,
+  onClose,
+  onReuse,
+  onRetried,
+}: Props) {
   const [campaign, setCampaign] = useState<CampaignFull | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [reusing, setReusing] = useState(false);
@@ -100,7 +108,7 @@ export function CampaignDetailModal({ campaignId, onClose, onReuse, onRetried }:
       subject: campaign.subject,
       bodyHtml: campaign.bodyHtml,
       recipientsText: includeRecipients
-        ? campaign.recipients.map((r) => r.email).join("\n")
+        ? (focusEmail ? [focusEmail] : campaign.recipients.map((r) => r.email)).join("\n")
         : undefined,
       attachments: campaign.attachments.map((a) => ({
         id: a.id,
@@ -153,11 +161,20 @@ export function CampaignDetailModal({ campaignId, onClose, onReuse, onRetried }:
     }
   }
 
+  const visibleRecipients = campaign
+    ? focusEmail
+      ? campaign.recipients.filter(
+          (r) => r.email.trim().toLowerCase() === focusEmail.trim().toLowerCase(),
+        )
+      : campaign.recipients
+    : [];
+
   const canRetry =
+    !focusEmail &&
     !!campaign &&
     campaign.recipients.some((r) => r.status === "PENDING" || r.status === "FAILED");
 
-  const counts = campaign?.recipients.reduce(
+  const counts = visibleRecipients.reduce(
     (acc, r) => {
       acc[r.status] = (acc[r.status] ?? 0) + 1;
       return acc;
@@ -165,8 +182,14 @@ export function CampaignDetailModal({ campaignId, onClose, onReuse, onRetried }:
     {} as Record<string, number>,
   );
 
-  const statusClass =
-    campaign?.status === "COMPLETED"
+  const focused = visibleRecipients[0];
+  const statusClass = focusEmail
+    ? focused?.status === "SENT"
+      ? "ui-chip ui-chip-ok"
+      : focused?.status === "FAILED"
+        ? "ui-chip ui-chip-danger"
+        : "ui-chip ui-chip-warn"
+    : campaign?.status === "COMPLETED"
       ? "ui-chip ui-chip-ok"
       : campaign?.status === "SENDING" || campaign?.status === "QUEUED"
         ? "ui-chip ui-chip-warn"
@@ -208,14 +231,20 @@ export function CampaignDetailModal({ campaignId, onClose, onReuse, onRetried }:
               >
                 {campaign?.subject ?? "Campaign"}
               </h3>
-              {campaign && <span className={statusClass}>{campaign.status}</span>}
+              {campaign && (
+                <span className={statusClass}>
+                  {focusEmail ? focused?.status ?? "—" : campaign.status}
+                </span>
+              )}
             </div>
             {campaign && (
               <p className="mt-1 text-xs leading-relaxed text-[var(--color-ink-muted)]">
                 {new Date(campaign.createdAt).toLocaleString()}
-                {counts
-                  ? ` · ${counts.SENT ?? 0} sent · ${counts.FAILED ?? 0} failed · ${counts.PENDING ?? 0} pending`
-                  : ""}
+                {focusEmail
+                  ? ""
+                  : counts
+                    ? ` · ${counts.SENT ?? 0} sent · ${counts.FAILED ?? 0} failed · ${counts.PENDING ?? 0} pending`
+                    : ""}
               </p>
             )}
           </div>
@@ -244,7 +273,11 @@ export function CampaignDetailModal({ campaignId, onClose, onReuse, onRetried }:
                 <MetaRow label="From" value={campaign.senderEmail} />
                 <MetaRow
                   label="To"
-                  value={`${campaign.recipients.length} recipient${campaign.recipients.length === 1 ? "" : "s"}`}
+                  value={
+                    focusEmail
+                      ? focusEmail
+                      : `${campaign.recipients.length} recipient${campaign.recipients.length === 1 ? "" : "s"}`
+                  }
                 />
               </div>
 
@@ -255,7 +288,7 @@ export function CampaignDetailModal({ campaignId, onClose, onReuse, onRetried }:
                   Recipients
                 </p>
                 <ul className="max-h-40 space-y-1.5 overflow-y-auto rounded-xl border border-[var(--color-line)] bg-white px-3 py-2">
-                  {campaign.recipients.map((r, i) => (
+                  {(focusEmail ? visibleRecipients : campaign.recipients).map((r, i) => (
                     <li
                       key={`${r.email}-${i}`}
                       className="flex flex-wrap items-baseline justify-between gap-2 text-xs"
