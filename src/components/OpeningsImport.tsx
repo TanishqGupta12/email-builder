@@ -2,35 +2,55 @@
 
 import { useMemo, useState } from "react";
 import { ListPagination } from "@/components/ListPagination";
+import { OpeningDetailModal } from "@/components/OpeningDetailModal";
 import {
-  openingsToCsv,
-  parseWhatsappChat,
-  type OpeningRow,
-} from "@/lib/openings/parse-chat";
+  EMPTY_OPENING_FILTERS,
+  OPENING_COLUMNS,
+  filterOpenings,
+  filtersAreActive,
+  type EmailPresence,
+  type OpeningColumnKey,
+  type OpeningFilters,
+} from "@/lib/openings/filters";
+import { openingsToCsv, parseWhatsappChat, type OpeningRow } from "@/lib/openings/parse-chat";
 import { PAGE_SIZE_OPTIONS, type PageSize } from "@/lib/pagination";
+
+const inputClass =
+  "w-full rounded-lg border border-[var(--color-line)] bg-white px-2.5 py-1.5 text-xs text-[var(--color-ink)] outline-none focus:border-[var(--color-accent)]";
 
 export function OpeningsImport() {
   const [rows, setRows] = useState<OpeningRow[]>([]);
   const [messageCount, setMessageCount] = useState(0);
   const [fileName, setFileName] = useState("");
   const [error, setError] = useState("");
-  const [emailsOnly, setEmailsOnly] = useState(false);
+  const [filters, setFilters] = useState<OpeningFilters>(EMPTY_OPENING_FILTERS);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState<PageSize>(10);
+  const [selected, setSelected] = useState<OpeningRow | null>(null);
 
-  const visible = useMemo(
-    () => (emailsOnly ? rows.filter((row) => row.emails) : rows),
-    [emailsOnly, rows],
-  );
+  const visible = useMemo(() => filterOpenings(rows, filters), [filters, rows]);
   const totalPages = Math.max(1, Math.ceil(visible.length / pageSize));
   const currentPage = Math.min(page, totalPages);
   const pageRows = visible.slice((currentPage - 1) * pageSize, currentPage * pageSize);
+  const filtering = filtersAreActive(filters);
+
+  function updateFilters(next: OpeningFilters) {
+    setFilters(next);
+    setPage(1);
+  }
+
+  function setText(key: OpeningColumnKey, value: string) {
+    updateFilters({ ...filters, text: { ...filters.text, [key]: value } });
+  }
 
   async function onFile(file: File | null) {
     setError("");
     setRows([]);
     setMessageCount(0);
     setFileName("");
+    setFilters(EMPTY_OPENING_FILTERS);
+    setSelected(null);
+    setPage(1);
     if (!file) return;
     const text = await file.text();
     const parsed = parseWhatsappChat(text, file.name);
@@ -40,7 +60,6 @@ export function OpeningsImport() {
     }
     setFileName(file.name);
     setMessageCount(parsed.messageCount);
-    setPage(1);
     setRows(parsed.rows);
   }
 
@@ -71,7 +90,7 @@ export function OpeningsImport() {
           {fileName ? "Replace chat export" : "Drop a WhatsApp .txt export"}
         </span>
         <span className="text-xs text-[var(--color-ink-muted)]">
-          One row per job message. Email, role, experience, location, and company when the post includes them.
+          One row per job message. Every extracted field is shown in the table and can be filtered.
         </span>
       </label>
 
@@ -85,9 +104,9 @@ export function OpeningsImport() {
         <div className="flex flex-col gap-3">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <p className="text-sm text-[var(--color-ink-muted)]">
-              <span className="font-semibold text-[var(--color-ink)]">{rows.length}</span> openings
-              from {messageCount} messages. {withEmail} {withEmail === 1 ? "has" : "have"} an email.
-              Company name was found on {withCompany}.
+              <span className="font-semibold text-[var(--color-ink)]">{visible.length}</span> of{" "}
+              {rows.length} openings from {messageCount} messages. {withEmail}{" "}
+              {withEmail === 1 ? "has" : "have"} an email. Company name was found on {withCompany}.
             </p>
             <button
               type="button"
@@ -98,42 +117,124 @@ export function OpeningsImport() {
               Download CSV
             </button>
           </div>
-          <label className="flex items-center gap-2 text-sm text-[var(--color-ink)]">
-            <input
-              type="checkbox"
-              checked={emailsOnly}
-              onChange={(event) => {
-                setEmailsOnly(event.target.checked);
-                setPage(1);
-              }}
-            />
-            Only rows that have an email
-          </label>
+
+          <div className="rounded-lg border border-[var(--color-line)] bg-[#f7faf9] p-3">
+            <div className="mb-3 flex items-center justify-between gap-3">
+              <p className="text-xs font-semibold uppercase tracking-wide text-[var(--color-ink-muted)]">
+                Filters
+              </p>
+              <button
+                type="button"
+                className="ui-btn ui-btn-ghost !px-2.5 !py-1 text-xs"
+                onClick={() => updateFilters(EMPTY_OPENING_FILTERS)}
+                disabled={!filtering}
+              >
+                Clear filters
+              </button>
+            </div>
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+              {OPENING_COLUMNS.map((column) => (
+                <label key={column.key} className="flex flex-col gap-1">
+                  <span className="text-[11px] font-semibold text-[var(--color-ink-muted)]">
+                    {column.label}
+                  </span>
+                  {column.key === "emails" && (
+                    <select
+                      className={inputClass}
+                      value={filters.emailPresence}
+                      onChange={(event) =>
+                        updateFilters({
+                          ...filters,
+                          emailPresence: event.target.value as EmailPresence,
+                        })
+                      }
+                    >
+                      <option value="any">Any email</option>
+                      <option value="has">Has an email</option>
+                      <option value="missing">No email</option>
+                    </select>
+                  )}
+                  {column.key === "experience" && (
+                    <div className="grid grid-cols-2 gap-1">
+                      <input
+                        className={inputClass}
+                        inputMode="decimal"
+                        placeholder="Min years"
+                        value={filters.experienceMin}
+                        onChange={(event) =>
+                          updateFilters({ ...filters, experienceMin: event.target.value })
+                        }
+                      />
+                      <input
+                        className={inputClass}
+                        inputMode="decimal"
+                        placeholder="Max years"
+                        value={filters.experienceMax}
+                        onChange={(event) =>
+                          updateFilters({ ...filters, experienceMax: event.target.value })
+                        }
+                      />
+                    </div>
+                  )}
+                  <input
+                    className={inputClass}
+                    placeholder={`Contains…`}
+                    value={filters.text[column.key] ?? ""}
+                    onChange={(event) => setText(column.key, event.target.value)}
+                  />
+                </label>
+              ))}
+            </div>
+          </div>
+
           <div className="overflow-x-auto rounded-lg border border-[var(--color-line)]">
-            <table className="min-w-[760px] w-full text-left text-xs">
+            <table className="w-max min-w-full text-left text-xs">
               <thead className="bg-[#f4f7f8] text-[var(--color-ink-muted)]">
                 <tr>
-                  {["Role", "Company", "Experience", "Location", "Email"].map((heading) => (
-                    <th key={heading} className="px-3 py-2 font-semibold">
-                      {heading}
+                  <th className="whitespace-nowrap px-3 py-2 font-semibold">View</th>
+                  {OPENING_COLUMNS.map((column) => (
+                    <th key={column.key} className="whitespace-nowrap px-3 py-2 font-semibold">
+                      {column.label}
                     </th>
                   ))}
                 </tr>
               </thead>
               <tbody>
                 {pageRows.map((row, index) => (
-                  <tr key={`${row.date}-${row.time}-${row.emails}-${index}`} className="border-t border-[var(--color-line)]">
-                    <td className="max-w-[220px] px-3 py-2 align-top">{row.role || "—"}</td>
-                    <td className="max-w-[180px] px-3 py-2 align-top">{row.companyName || "—"}</td>
-                    <td className="px-3 py-2 align-top">{row.experience || "—"}</td>
-                    <td className="px-3 py-2 align-top">{row.location || "—"}</td>
-                    <td className="max-w-[220px] px-3 py-2 align-top break-all">{row.emails || "—"}</td>
+                  <tr
+                    key={`${row.date}-${row.time}-${row.sender}-${index}`}
+                    className="border-t border-[var(--color-line)]"
+                  >
+                    <td className="px-3 py-2 align-top">
+                      <button
+                        type="button"
+                        className="ui-btn ui-btn-ghost !px-2.5 !py-1 text-xs"
+                        onClick={() => setSelected(row)}
+                      >
+                        View
+                      </button>
+                    </td>
+                    {OPENING_COLUMNS.map((column) => {
+                      const value = row[column.key];
+                      return (
+                        <td
+                          key={column.key}
+                          className="max-w-[240px] px-3 py-2 align-top break-words"
+                          title={value}
+                        >
+                          <span className="line-clamp-3">{value || "—"}</span>
+                        </td>
+                      );
+                    })}
                   </tr>
                 ))}
                 {visible.length === 0 && (
                   <tr>
-                    <td colSpan={5} className="px-3 py-6 text-center text-[var(--color-ink-muted)]">
-                      No openings matched this filter.
+                    <td
+                      colSpan={OPENING_COLUMNS.length + 1}
+                      className="px-3 py-6 text-center text-[var(--color-ink-muted)]"
+                    >
+                      No openings matched these filters.
                     </td>
                   </tr>
                 )}
@@ -154,6 +255,7 @@ export function OpeningsImport() {
           />
         </div>
       )}
+      {selected && <OpeningDetailModal row={selected} onClose={() => setSelected(null)} />}
     </div>
   );
 }

@@ -447,6 +447,31 @@ export function parseWhatsappChat(raw: string, sourceFile = ""): ChatParseResult
   return { messageCount, rows };
 }
 
+export function experienceBounds(value: string): { min: number; max: number } | null {
+  const text = value.replace(/[–—]/g, "-").replace(/\s+/g, " ").trim();
+  if (!text) return null;
+  const monthsOnly = /month/i.test(text) && !/year|\byrs?\b/i.test(text);
+  const scale = (years: number) => (monthsOnly ? years / 12 : years);
+
+  const range = text.match(/(\d+(?:\.\d+)?)\s*(?:-|\bto\b)\s*(\d+(?:\.\d+)?)/i);
+  if (range) {
+    const low = scale(Number(range[1]));
+    const high = scale(Number(range[2]));
+    return { min: Math.min(low, high), max: Math.max(low, high) };
+  }
+  const atLeast = text.match(/(\d+(?:\.\d+)?)\s*\+|((?:minimum|min\.?|at least)\s*)(\d+(?:\.\d+)?)/i);
+  if (atLeast) {
+    const years = scale(Number(atLeast[1] || atLeast[3]));
+    return { min: years, max: Number.POSITIVE_INFINITY };
+  }
+  const single = text.match(/(\d+(?:\.\d+)?)\s*(?:years?|yrs?|months?)/i);
+  if (single) {
+    const years = scale(Number(single[1]));
+    return { min: years, max: years };
+  }
+  return null;
+}
+
 export function openingsToCsv(rows: OpeningRow[]): string {
   return Papa.unparse(
     rows.map((row) => ({
