@@ -21,6 +21,7 @@ export async function PUT(req: Request) {
   const templateLanguage =
     typeof body.templateLanguage === "string" ? body.templateLanguage.trim() : "";
   const accessToken = typeof body.accessToken === "string" ? body.accessToken : "";
+  const bodyVariable = body.bodyVariable === true;
 
   if (!/^\d+$/.test(phoneNumberId)) {
     return NextResponse.json({ error: "Phone number ID must be digits." }, { status: 400 });
@@ -41,6 +42,7 @@ export async function PUT(req: Request) {
       accessToken,
       templateName,
       templateLanguage,
+      bodyVariable,
     });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);

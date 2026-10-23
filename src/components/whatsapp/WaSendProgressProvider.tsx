@@ -38,6 +38,7 @@ type WaSendProgressValue = {
   minimized: boolean;
   setMinimized: (value: boolean) => void;
   startSend: (fd: FormData, message?: string) => Promise<StartResult>;
+  retry: (id: string) => Promise<StartResult>;
   dismiss: () => void;
 };
 
@@ -90,6 +91,7 @@ export function WaSendProgressProvider({ children }: { children: React.ReactNode
   const [message, setMessage] = useState<string | undefined>();
   const [minimized, setMinimizedState] = useState(false);
   const [ready, setReady] = useState(false);
+  const [pollEpoch, setPollEpoch] = useState(0);
   const duplicateCountRef = useRef(0);
 
   const setMinimized = useCallback(
@@ -123,6 +125,7 @@ export function WaSendProgressProvider({ children }: { children: React.ReactNode
     setStarting(false);
     setBroadcast({ ...next, duplicateCount });
     setWatchId(next.id);
+    setPollEpoch((epoch) => epoch + 1);
     setMessage(next.message);
     setMinimizedState(mini);
     writeStored({
@@ -194,6 +197,38 @@ export function WaSendProgressProvider({ children }: { children: React.ReactNode
     [watch],
   );
 
+  const retry = useCallback(
+    async (id: string): Promise<StartResult> => {
+      setStarting(true);
+      setBroadcast(null);
+      try {
+        const res = await fetch(`/api/whatsapp/broadcasts/${id}/retry`, { method: "POST" });
+        const data = await res.json();
+        if (!res.ok) {
+          setStarting(false);
+          return { ok: false, error: data.error ?? "Retry failed" };
+        }
+        const count = Number(data.pendingCount) || 0;
+        watch({
+          id,
+          status: "QUEUED",
+          message: typeof data.message === "string" ? data.message : undefined,
+          recipients: Array.from({ length: count }, (_, i) => ({
+            phone: `pending-${i}`,
+            status: "PENDING",
+            errorMessage: null,
+          })),
+        });
+        window.dispatchEvent(new Event("whatsapp:refresh"));
+        return { ok: true };
+      } catch {
+        setStarting(false);
+        return { ok: false, error: "Network error" };
+      }
+    },
+    [watch],
+  );
+
   useEffect(() => {
     if (!ready || !watchId) return;
     let stopped = false;
@@ -229,7 +264,7 @@ export function WaSendProgressProvider({ children }: { children: React.ReactNode
       stopped = true;
       window.clearInterval(timer);
     };
-  }, [dismiss, message, ready, watchId]);
+  }, [dismiss, message, pollEpoch, ready, watchId]);
 
   useEffect(() => {
     const visible = starting || !!broadcast;
@@ -247,9 +282,10 @@ export function WaSendProgressProvider({ children }: { children: React.ReactNode
       minimized,
       setMinimized,
       startSend,
+      retry,
       dismiss,
     }),
-    [broadcast, dismiss, minimized, setMinimized, startSend, starting],
+    [broadcast, dismiss, minimized, retry, setMinimized, startSend, starting],
   );
 
   const visible = starting || !!broadcast;
@@ -264,6 +300,12 @@ export function WaSendProgressProvider({ children }: { children: React.ReactNode
           minimized={minimized}
           onToggle={() => setMinimized(!minimized)}
           onDismiss={broadcast?.status === "COMPLETED" ? dismiss : undefined}
+          onRetry={
+            broadcast?.status === "COMPLETED" &&
+            broadcast.recipients.some((recipient) => recipient.status === "FAILED")
+              ? () => void retry(broadcast.id)
+              : undefined
+          }
         />
       )}
     </WaSendProgressContext.Provider>
@@ -276,12 +318,14 @@ function WaSendDock({
   minimized,
   onToggle,
   onDismiss,
+  onRetry,
 }: {
   broadcast: LiveBroadcast | null;
   starting?: boolean;
   minimized: boolean;
   onToggle: () => void;
   onDismiss?: () => void;
+  onRetry?: () => void;
 }) {
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
@@ -325,6 +369,11 @@ function WaSendDock({
               <button type="button" className="ui-btn ui-btn-ghost !px-2.5 !py-1 text-xs" onClick={onToggle}>
                 {minimized ? "Open" : "Mini"}
               </button>
+              {onRetry && (
+                <button type="button" className="ui-btn ui-btn-primary !px-2.5 !py-1 text-xs" onClick={onRetry}>
+                  Retry
+                </button>
+              )}
               {onDismiss && (
                 <button type="button" className="ui-btn ui-btn-ghost !px-2.5 !py-1 text-xs" onClick={onDismiss}>
                   Close
@@ -346,10 +395,36 @@ function WaSendDock({
               <DockStat label="Duplicates" value={duplicates} />
             </div>
           )}
+          {!minimized && <FailureLog recipients={broadcast?.recipients ?? []} />}
         </div>
       </div>
     </div>,
     document.body,
+  );
+}
+
+function FailureLog({
+  recipients,
+}: {
+  recipients: { phone: string; status: string; errorMessage: string | null }[];
+}) {
+  const failures = recipients.filter(
+    (recipient) => recipient.status === "FAILED" && recipient.errorMessage && !recipient.phone.startsWith("pending-"),
+  );
+  if (failures.length === 0) return null;
+  return (
+    <div className="mt-3 rounded-xl border border-[#fecdca] bg-[#fff5f4] px-3 py-2 text-left text-xs text-[var(--color-danger)]">
+      <p className="font-semibold">Failure log</p>
+      <ul className="mt-1 max-h-28 space-y-1 overflow-auto">
+        {failures.slice(0, 8).map((failure) => (
+          <li key={`${failure.phone}-${failure.errorMessage}`}>
+            <span className="font-mono">{failure.phone}</span>
+            {" — "}
+            {failure.errorMessage}
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }
 

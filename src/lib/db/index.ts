@@ -108,6 +108,7 @@ CREATE TABLE IF NOT EXISTS wa_connection (
   access_token TEXT NOT NULL,
   template_name TEXT NOT NULL,
   template_language TEXT NOT NULL,
+  body_variable INTEGER NOT NULL DEFAULT 0,
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL
 );
@@ -207,6 +208,34 @@ const globalForWaSchema = globalThis as unknown as {
   __waSchemaReady?: Promise<void>;
 };
 
+const globalForWaBody = globalThis as unknown as {
+  __waBodyColumn?: Promise<void>;
+};
+
+async function ensureWaBodyVariableColumn(db: AppDatabase): Promise<void> {
+  if (!globalForWaBody.__waBodyColumn) {
+    const client = (db as unknown as { $client: ReturnType<typeof createClient> }).$client;
+    globalForWaBody.__waBodyColumn = client
+      .execute("PRAGMA table_info(wa_connection)")
+      .then(async (info) => {
+        const hasColumn = info.rows.some((row) => {
+          const name = (row as { name?: string }).name ?? row[1];
+          return name === "body_variable";
+        });
+        if (!hasColumn) {
+          await client.execute(
+            "ALTER TABLE wa_connection ADD COLUMN body_variable INTEGER NOT NULL DEFAULT 0",
+          );
+        }
+      })
+      .catch((error: unknown) => {
+        globalForWaBody.__waBodyColumn = undefined;
+        throw error;
+      });
+  }
+  await globalForWaBody.__waBodyColumn;
+}
+
 async function ensureWhatsappTables(db: AppDatabase): Promise<void> {
   if (!globalForWaSchema.__waSchemaReady) {
     const client = (db as unknown as { $client: ReturnType<typeof createClient> }).$client;
@@ -219,6 +248,7 @@ CREATE TABLE IF NOT EXISTS wa_connection (
   access_token TEXT NOT NULL,
   template_name TEXT NOT NULL,
   template_language TEXT NOT NULL,
+  body_variable INTEGER NOT NULL DEFAULT 0,
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL
 );
@@ -277,6 +307,7 @@ export function getDb(): Promise<AppDatabase> {
   }
   return globalForDb.__emailBuilderDb.then(async (db) => {
     await ensureWhatsappTables(db);
+    await ensureWaBodyVariableColumn(db);
     return db;
   });
 }

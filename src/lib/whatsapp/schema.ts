@@ -6,6 +6,8 @@ export const waConnection = sqliteTable("wa_connection", {
   accessToken: text("access_token").notNull(),
   templateName: text("template_name").notNull(),
   templateLanguage: text("template_language").notNull(),
+  /** When true, the alert text is sent as the template body variable {{1}}. */
+  bodyVariable: integer("body_variable", { mode: "boolean" }).notNull().default(false),
   createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
   updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
 });

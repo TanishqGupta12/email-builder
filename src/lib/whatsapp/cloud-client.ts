@@ -60,6 +60,7 @@ export async function sendWhatsappTemplate(
   input: {
     to: string;
     bodyText: string;
+    includeBodyVariable?: boolean;
     media?: { id: string; kind: WaMediaKind; filename: string };
   },
 ): Promise<void> {
@@ -74,10 +75,18 @@ export async function sendWhatsappTemplate(
           : { type: "document", document: { id: media.id, filename: media.filename } };
     components.push({ type: "header", parameters: [parameter] });
   }
-  components.push({
-    type: "body",
-    parameters: [{ type: "text", text: input.bodyText }],
-  });
+  if (input.includeBodyVariable) {
+    components.push({
+      type: "body",
+      parameters: [{ type: "text", text: input.bodyText }],
+    });
+  }
+
+  const template: Record<string, unknown> = {
+    name: creds.templateName,
+    language: { code: creds.templateLanguage },
+  };
+  if (components.length > 0) template.components = components;
 
   const res = await fetch(`${GRAPH_BASE}/${creds.phoneNumberId}/messages`, {
     method: "POST",
@@ -89,11 +98,7 @@ export async function sendWhatsappTemplate(
       messaging_product: "whatsapp",
       to: input.to,
       type: "template",
-      template: {
-        name: creds.templateName,
-        language: { code: creds.templateLanguage },
-        components,
-      },
+      template,
     }),
     signal: AbortSignal.timeout(30_000),
   });

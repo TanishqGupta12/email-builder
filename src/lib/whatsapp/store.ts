@@ -47,6 +47,7 @@ export type BroadcastSummary = {
   sent: number;
   failed: number;
   pending: number;
+  failures: { phone: string; errorMessage: string }[];
 };
 
 export type BroadcastsPage = {
@@ -63,6 +64,7 @@ export type WaConnectionRecord = {
   accessToken: string;
   templateName: string;
   templateLanguage: string;
+  bodyVariable: boolean;
   createdAt: Date;
   updatedAt: Date;
 };
@@ -112,6 +114,7 @@ function toConnection(row: typeof waConnection.$inferSelect): WaConnectionRecord
     accessToken: row.accessToken,
     templateName: row.templateName,
     templateLanguage: row.templateLanguage,
+    bodyVariable: row.bodyVariable,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
@@ -135,8 +138,9 @@ export async function seedWhatsappConnectionFromEnvIfEmpty(): Promise<void> {
       id: randomUUID(),
       phoneNumberId,
       accessToken,
-      templateName: process.env.WHATSAPP_TEMPLATE_NAME?.trim() || "alert",
-      templateLanguage: process.env.WHATSAPP_TEMPLATE_LANGUAGE?.trim() || "en",
+      templateName: process.env.WHATSAPP_TEMPLATE_NAME?.trim() || "hello_world",
+      templateLanguage: process.env.WHATSAPP_TEMPLATE_LANGUAGE?.trim() || "en_US",
+      bodyVariable: false,
       createdAt: now,
       updatedAt: now,
     })
@@ -155,6 +159,7 @@ export async function getConnection(): Promise<
     phoneNumberId: row.phoneNumberId,
     templateName: row.templateName,
     templateLanguage: row.templateLanguage,
+    bodyVariable: row.bodyVariable,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
     tokenSet: row.accessToken.length > 0,
@@ -174,6 +179,7 @@ export async function saveConnection(input: {
   accessToken?: string;
   templateName: string;
   templateLanguage: string;
+  bodyVariable: boolean;
 }): Promise<WaConnectionRecord> {
   await seedWhatsappConnectionFromEnvIfEmpty();
   const db = await getDb();
@@ -192,6 +198,7 @@ export async function saveConnection(input: {
         accessToken: token,
         templateName: input.templateName,
         templateLanguage: input.templateLanguage,
+        bodyVariable: input.bodyVariable,
         updatedAt: now,
       })
       .where(eq(waConnection.id, current.id))
@@ -202,6 +209,7 @@ export async function saveConnection(input: {
       accessToken: token,
       templateName: input.templateName,
       templateLanguage: input.templateLanguage,
+      bodyVariable: input.bodyVariable,
       updatedAt: now,
     };
   }
@@ -212,6 +220,7 @@ export async function saveConnection(input: {
     accessToken: token,
     templateName: input.templateName,
     templateLanguage: input.templateLanguage,
+    bodyVariable: input.bodyVariable,
     createdAt: now,
     updatedAt: now,
   };
@@ -440,6 +449,7 @@ export async function listBroadcastsPage(
   const ids = rows.map((row) => row.id);
   const counts = new Map<string, { sent: number; failed: number; pending: number }>();
   const attachmentNames = new Map<string, string>();
+  const failureLogs = new Map<string, { phone: string; errorMessage: string }[]>();
 
   if (ids.length > 0) {
     const grouped = await db
@@ -474,6 +484,25 @@ export async function listBroadcastsPage(
         attachmentNames.set(file.broadcastId, file.originalName);
       }
     }
+
+    const failedRows = await db
+      .select({
+        broadcastId: waRecipients.broadcastId,
+        phone: waRecipients.phone,
+        errorMessage: waRecipients.errorMessage,
+      })
+      .from(waRecipients)
+      .where(and(inArray(waRecipients.broadcastId, ids), eq(waRecipients.status, "FAILED")))
+      .all();
+    for (const failed of failedRows) {
+      const list = failureLogs.get(failed.broadcastId) ?? [];
+      if (list.length >= 8) continue;
+      list.push({
+        phone: failed.phone,
+        errorMessage: failed.errorMessage?.trim() || "WhatsApp rejected this number.",
+      });
+      failureLogs.set(failed.broadcastId, list);
+    }
   }
 
   return {
@@ -486,6 +515,7 @@ export async function listBroadcastsPage(
         status: row.status,
         createdAt: row.createdAt,
         attachmentName: attachmentNames.get(row.id) ?? null,
+        failures: failureLogs.get(row.id) ?? [],
         ...tally,
       };
     }),
@@ -494,6 +524,59 @@ export async function listBroadcastsPage(
     pageSize: safePageSize,
     totalPages,
   };
+}
+
+/** Puts failed numbers back to pending so the same broadcast can be sent again. */
+export async function prepareBroadcastRetry(
+  broadcastId: string,
+): Promise<{ ok: true; pendingCount: number; message: string } | { ok: false; error: string }> {
+  const broadcast = await getBroadcast(broadcastId, { includeContent: false });
+  if (!broadcast) return { ok: false, error: "Broadcast not found." };
+  if (broadcast.status === "QUEUED" || broadcast.status === "SENDING") {
+    return { ok: false, error: "This broadcast is already sending." };
+  }
+
+  const retryable = broadcast.recipients.filter(
+    (recipient) => recipient.status === "FAILED" || recipient.status === "PENDING",
+  );
+  if (retryable.length === 0) {
+    return { ok: false, error: "No failed numbers to retry." };
+  }
+
+  const db = await getDb();
+  const now = new Date();
+  await db.transaction(async (tx) => {
+    await tx
+      .update(waRecipients)
+      .set({ status: "PENDING", errorMessage: null, sentAt: null })
+      .where(and(eq(waRecipients.broadcastId, broadcastId), eq(waRecipients.status, "FAILED")))
+      .run();
+    await tx
+      .update(waBroadcasts)
+      .set({ status: "QUEUED", updatedAt: now })
+      .where(eq(waBroadcasts.id, broadcastId))
+      .run();
+  });
+
+  return { ok: true, pendingCount: retryable.length, message: broadcast.message };
+}
+
+export async function updateBroadcastMessage(id: string, message: string): Promise<void> {
+  const db = await getDb();
+  const existing = await db
+    .select({ id: waBroadcasts.id, status: waBroadcasts.status })
+    .from(waBroadcasts)
+    .where(eq(waBroadcasts.id, id))
+    .get();
+  if (!existing) throw new Error("Broadcast not found.");
+  if (existing.status === "QUEUED" || existing.status === "SENDING") {
+    throw new Error("Wait until sending finishes before editing.");
+  }
+  await db
+    .update(waBroadcasts)
+    .set({ message, updatedAt: new Date() })
+    .where(eq(waBroadcasts.id, id))
+    .run();
 }
 
 export async function setBroadcastStatus(id: string, status: BroadcastStatus): Promise<void> {

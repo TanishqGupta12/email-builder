@@ -40,7 +40,7 @@ export async function sendWhatsappBroadcast(broadcastId: string) {
     }
 
     const bodyText = templateBodyParameter(broadcast.message);
-    if (!bodyText) {
+    if (connection.bodyVariable && !bodyText) {
       await failAllPendingRecipients(broadcastId, "Message is empty after WhatsApp formatting.");
       await setBroadcastStatus(broadcastId, "COMPLETED");
       return;
@@ -87,6 +87,7 @@ export async function sendWhatsappBroadcast(broadcastId: string) {
         await sendWhatsappTemplate(creds, {
           to: recipient.phone,
           bodyText,
+          includeBodyVariable: connection.bodyVariable,
           media,
         });
         await patchRecipient(broadcastId, recipient.id, {
@@ -96,9 +97,11 @@ export async function sendWhatsappBroadcast(broadcastId: string) {
         });
       } catch (err: unknown) {
         const message = err instanceof Error ? err.message : String(err);
+        const errorMessage = message.slice(0, 500);
+        console.error("[sendWhatsappBroadcast] failed", broadcastId, recipient.phone, errorMessage);
         await patchRecipient(broadcastId, recipient.id, {
           status: "FAILED",
-          errorMessage: message.slice(0, 500),
+          errorMessage,
         });
       }
 

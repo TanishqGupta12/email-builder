@@ -6,6 +6,7 @@ type Connection = {
   phoneNumberId: string;
   templateName: string;
   templateLanguage: string;
+  bodyVariable: boolean;
   tokenSet: boolean;
   tokenHint: string | null;
 };
@@ -13,8 +14,9 @@ type Connection = {
 export function WhatsappConnectionForm() {
   const [phoneNumberId, setPhoneNumberId] = useState("");
   const [accessToken, setAccessToken] = useState("");
-  const [templateName, setTemplateName] = useState("alert");
-  const [templateLanguage, setTemplateLanguage] = useState("en");
+  const [templateName, setTemplateName] = useState("hello_world");
+  const [templateLanguage, setTemplateLanguage] = useState("en_US");
+  const [bodyVariable, setBodyVariable] = useState(false);
   const [tokenSet, setTokenSet] = useState(false);
   const [tokenHint, setTokenHint] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -34,6 +36,7 @@ export function WhatsappConnectionForm() {
           setPhoneNumberId(connection.phoneNumberId);
           setTemplateName(connection.templateName);
           setTemplateLanguage(connection.templateLanguage);
+          setBodyVariable(connection.bodyVariable === true);
           setTokenSet(connection.tokenSet);
           setTokenHint(connection.tokenHint);
         }
@@ -62,6 +65,7 @@ export function WhatsappConnectionForm() {
           accessToken,
           templateName,
           templateLanguage,
+          bodyVariable,
         }),
       });
       const data = await res.json();
@@ -145,9 +149,18 @@ export function WhatsappConnectionForm() {
           />
         </div>
       </div>
+      <label className="flex items-start gap-2 text-sm text-[var(--color-ink)]">
+        <input
+          type="checkbox"
+          className="mt-1"
+          checked={bodyVariable}
+          onChange={(event) => setBodyVariable(event.target.checked)}
+        />
+        <span>This template has a {"{{1}}"} variable. Leave this off for Meta’s hello_world template.</span>
+      </label>
       <p className="ui-hint">
-        The approved template needs a body variable {"{{1}}"}. Add a document, image, or video header
-        only when this portal sends an attachment.
+        Use the template name and language exactly as they appear in Meta. hello_world uses en_US and
+        has no variable, so the alert text is not inserted into that template.
       </p>
       {error && <p className="text-sm text-[var(--color-danger)]">{error}</p>}
       {saved && <p className="text-sm text-[var(--color-ok)]">Connection saved.</p>}
