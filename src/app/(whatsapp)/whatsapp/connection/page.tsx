@@ -38,15 +38,15 @@ export default function WhatsAppConnectionPage() {
           </li>
           <li className="flex gap-3">
             <span className="font-display font-semibold text-[var(--color-accent-deep)]">2</span>
-            <p>Click Create app, choose Business, and name it.</p>
+            <p>Click Create app. On Add use cases, tick Connect with customers through WhatsApp, then Next.</p>
           </li>
           <li className="flex gap-3">
             <span className="font-display font-semibold text-[var(--color-accent-deep)]">3</span>
-            <p>On the app dashboard, add the WhatsApp product.</p>
+            <p>Finish creating the app. Leave the ads, Threads, games, and Facebook Login use cases unchecked.</p>
           </li>
           <li className="flex gap-3">
             <span className="font-display font-semibold text-[var(--color-accent-deep)]">4</span>
-            <p>Open WhatsApp, then API setup.</p>
+            <p>Open the app, then WhatsApp, then API setup.</p>
           </li>
         </ol>
         <div className="mt-5 space-y-3 border-t border-[var(--color-line)] pt-4 text-sm leading-relaxed text-[var(--color-ink-muted)]">
