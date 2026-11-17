@@ -472,24 +472,40 @@ export function experienceBounds(value: string): { min: number; max: number } | 
   return null;
 }
 
-export function openingsToCsv(rows: OpeningRow[]): string {
+const CSV_FIELD_BY_KEY: Record<keyof OpeningRow, string> = {
+  date: "date",
+  time: "time",
+  sender: "sender",
+  role: "role",
+  companyName: "company_name",
+  description: "description",
+  experience: "experience",
+  location: "location",
+  workMode: "work_mode",
+  salary: "salary",
+  skills: "skills",
+  emails: "emails",
+  contactPhone: "contact_phone",
+  sourceFile: "source_file",
+  message: "message",
+};
+
+export function openingsToCsv(
+  rows: OpeningRow[],
+  columns?: ReadonlyArray<keyof OpeningRow>,
+): string {
+  const keys =
+    columns && columns.length > 0
+      ? columns.filter((key) => key in CSV_FIELD_BY_KEY)
+      : (Object.keys(CSV_FIELD_BY_KEY) as Array<keyof OpeningRow>);
+
   return Papa.unparse(
-    rows.map((row) => ({
-      date: row.date,
-      time: row.time,
-      sender: row.sender,
-      role: row.role,
-      company_name: row.companyName,
-      description: row.description,
-      experience: row.experience,
-      location: row.location,
-      work_mode: row.workMode,
-      salary: row.salary,
-      skills: row.skills,
-      emails: row.emails,
-      contact_phone: row.contactPhone,
-      source_file: row.sourceFile,
-      message: row.message,
-    })),
+    rows.map((row) => {
+      const out: Record<string, string> = {};
+      for (const key of keys) {
+        out[CSV_FIELD_BY_KEY[key]] = row[key];
+      }
+      return out;
+    }),
   );
 }

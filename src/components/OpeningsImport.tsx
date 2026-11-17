@@ -27,12 +27,16 @@ export function OpeningsImport() {
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState<PageSize>(10);
   const [selected, setSelected] = useState<OpeningRow | null>(null);
+  const [exportColumns, setExportColumns] = useState<OpeningColumnKey[]>(
+    () => OPENING_COLUMNS.map((column) => column.key),
+  );
 
   const visible = useMemo(() => filterOpenings(rows, filters), [filters, rows]);
   const totalPages = Math.max(1, Math.ceil(visible.length / pageSize));
   const currentPage = Math.min(page, totalPages);
   const pageRows = visible.slice((currentPage - 1) * pageSize, currentPage * pageSize);
   const filtering = filtersAreActive(filters);
+  const allExportSelected = exportColumns.length === OPENING_COLUMNS.length;
 
   function updateFilters(next: OpeningFilters) {
     setFilters(next);
@@ -49,6 +53,7 @@ export function OpeningsImport() {
     setMessageCount(0);
     setFileName("");
     setFilters(EMPTY_OPENING_FILTERS);
+    setExportColumns(OPENING_COLUMNS.map((column) => column.key));
     setSelected(null);
     setPage(1);
     if (!file) return;
@@ -63,8 +68,18 @@ export function OpeningsImport() {
     setRows(parsed.rows);
   }
 
+  function toggleExportColumn(key: OpeningColumnKey) {
+    setExportColumns((current) =>
+      current.includes(key) ? current.filter((item) => item !== key) : [...current, key],
+    );
+  }
+
   function download() {
-    const csv = openingsToCsv(visible);
+    const ordered = OPENING_COLUMNS.map((column) => column.key).filter((key) =>
+      exportColumns.includes(key),
+    );
+    if (ordered.length === 0) return;
+    const csv = openingsToCsv(visible, ordered);
     const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
@@ -112,10 +127,53 @@ export function OpeningsImport() {
               type="button"
               className="ui-btn ui-btn-primary"
               onClick={download}
-              disabled={visible.length === 0}
+              disabled={visible.length === 0 || exportColumns.length === 0}
             >
               Download CSV
+              {exportColumns.length > 0 ? ` (${exportColumns.length})` : ""}
             </button>
+          </div>
+
+          <div className="rounded-lg border border-[var(--color-line)] bg-[#f7faf9] p-3">
+            <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+              <p className="text-xs font-semibold uppercase tracking-wide text-[var(--color-ink-muted)]">
+                CSV columns
+              </p>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  className="ui-btn ui-btn-ghost !px-2.5 !py-1 text-xs"
+                  onClick={() =>
+                    setExportColumns(
+                      allExportSelected ? [] : OPENING_COLUMNS.map((column) => column.key),
+                    )
+                  }
+                >
+                  {allExportSelected ? "Clear all" : "Select all"}
+                </button>
+              </div>
+            </div>
+            <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+              {OPENING_COLUMNS.map((column) => {
+                const checked = exportColumns.includes(column.key);
+                return (
+                  <label
+                    key={column.key}
+                    className="flex cursor-pointer items-center gap-2 rounded-lg border border-[var(--color-line)] bg-white px-2.5 py-2 text-xs text-[var(--color-ink)]"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={() => toggleExportColumn(column.key)}
+                    />
+                    <span>{column.label}</span>
+                  </label>
+                );
+              })}
+            </div>
+            {exportColumns.length === 0 && (
+              <p className="mt-2 text-xs text-red-600">Select at least one column to download CSV.</p>
+            )}
           </div>
 
           <div className="rounded-lg border border-[var(--color-line)] bg-[#f7faf9] p-3">
