@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useSendProgress } from "@/components/SendProgressProvider";
 
 const links = [
   { href: "/", label: "Compose" },
@@ -14,6 +15,8 @@ const links = [
 
 export function AppNav() {
   const pathname = usePathname();
+  const { campaign, starting, dockOpen, openTerminal, closeTerminal } = useSendProgress();
+  const hasSend = starting || !!campaign;
 
   return (
     <header className="ui-topbar">
@@ -52,6 +55,19 @@ export function AppNav() {
               </Link>
             );
           })}
+          {hasSend && (
+            <button
+              type="button"
+              className={`rounded-lg px-2.5 py-1.5 transition sm:px-3 ${
+                dockOpen
+                  ? "bg-white text-[var(--color-ink)] shadow-sm"
+                  : "bg-[var(--color-accent)] text-white shadow-sm hover:opacity-90"
+              }`}
+              onClick={() => (dockOpen ? closeTerminal() : openTerminal())}
+            >
+              {dockOpen ? "Hide terminal" : "Send terminal"}
+            </button>
+          )}
         </nav>
       </div>
     </header>
