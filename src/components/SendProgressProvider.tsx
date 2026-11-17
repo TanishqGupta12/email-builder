@@ -37,10 +37,7 @@ type SendProgressValue = {
   starting: boolean;
   cancelling: boolean;
   minimized: boolean;
-  dockOpen: boolean;
   setMinimized: (value: boolean) => void;
-  openTerminal: () => void;
-  closeTerminal: () => void;
   begin: () => void;
   startSend: (fd: FormData, subject?: string) => Promise<StartResult>;
   stopSend: () => Promise<void>;
@@ -82,7 +79,6 @@ export function SendProgressProvider({ children }: { children: React.ReactNode }
   const [watchId, setWatchId] = useState<string | null>(null);
   const [subject, setSubject] = useState<string | undefined>();
   const [minimized, setMinimizedState] = useState(false);
-  const [dockOpen, setDockOpen] = useState(true);
   const [cancelling, setCancelling] = useState(false);
   const [ready, setReady] = useState(false);
   const duplicateCountRef = useRef(0);
@@ -109,7 +105,6 @@ export function SendProgressProvider({ children }: { children: React.ReactNode }
     setWatchId(null);
     setSubject(undefined);
     setMinimizedState(false);
-    setDockOpen(true);
     duplicateCountRef.current = 0;
     writeStored(null);
   }, []);
@@ -145,19 +140,9 @@ export function SendProgressProvider({ children }: { children: React.ReactNode }
     }
   }, [cancelling, watchId]);
 
-  const openTerminal = useCallback(() => {
-    setDockOpen(true);
-    setMinimizedState(false);
-  }, []);
-
-  const closeTerminal = useCallback(() => {
-    setDockOpen(false);
-  }, []);
-
   const begin = useCallback(() => {
     setStarting(true);
     setCampaign(null);
-    setDockOpen(true);
   }, []);
 
   const watch = useCallback((next: LiveCampaign, mini = false) => {
@@ -168,7 +153,6 @@ export function SendProgressProvider({ children }: { children: React.ReactNode }
     setWatchId(next.id);
     setSubject(next.subject);
     setMinimizedState(mini);
-    setDockOpen(true);
     writeStored({
       id: next.id,
       subject: next.subject,
@@ -242,7 +226,6 @@ export function SendProgressProvider({ children }: { children: React.ReactNode }
     if (!ready || !watchId) return;
     let stopped = false;
     let timer = 0;
-    let closeTimer = 0;
     const tick = async () => {
       if (stopped) return;
       try {
@@ -263,9 +246,6 @@ export function SendProgressProvider({ children }: { children: React.ReactNode }
         if (next.status === "COMPLETED") {
           stopped = true;
           window.clearInterval(timer);
-          closeTimer = window.setTimeout(() => {
-            setDockOpen(false);
-          }, 2500);
         }
       } catch {
         /* keep polling */
@@ -276,18 +256,17 @@ export function SendProgressProvider({ children }: { children: React.ReactNode }
     return () => {
       stopped = true;
       window.clearInterval(timer);
-      window.clearTimeout(closeTimer);
     };
   }, [dismiss, ready, subject, watchId]);
 
   useEffect(() => {
-    const visible = dockOpen && (starting || !!campaign);
+    const visible = starting || !!campaign;
     const pad = !visible ? "" : minimized ? "5.5rem" : "11.5rem";
     document.body.style.paddingBottom = pad;
     return () => {
       document.body.style.paddingBottom = "";
     };
-  }, [campaign, dockOpen, minimized, starting]);
+  }, [campaign, minimized, starting]);
 
   const value = useMemo(
     () => ({
@@ -295,46 +274,27 @@ export function SendProgressProvider({ children }: { children: React.ReactNode }
       starting,
       cancelling,
       minimized,
-      dockOpen,
       setMinimized,
-      openTerminal,
-      closeTerminal,
       begin,
       startSend,
       stopSend,
       dismiss,
     }),
-    [
-      begin,
-      campaign,
-      cancelling,
-      closeTerminal,
-      dismiss,
-      dockOpen,
-      minimized,
-      openTerminal,
-      setMinimized,
-      startSend,
-      starting,
-      stopSend,
-    ],
+    [begin, campaign, cancelling, dismiss, minimized, setMinimized, startSend, starting, stopSend],
   );
 
-  const hasSend = starting || !!campaign;
-  const showDock = hasSend && dockOpen;
-  const showOpenButton = hasSend && !dockOpen;
+  const visible = starting || !!campaign;
 
   return (
     <SendProgressContext.Provider value={value}>
       {children}
-      {showDock && (
+      {visible && (
         <SendProgressDock
           campaign={campaign}
           starting={starting && !campaign}
           cancelling={cancelling}
           minimized={minimized}
           onToggle={() => setMinimized(!minimized)}
-          onClose={closeTerminal}
           onStop={
             campaign &&
             (campaign.status === "QUEUED" || campaign.status === "SENDING")
@@ -342,13 +302,6 @@ export function SendProgressProvider({ children }: { children: React.ReactNode }
               : undefined
           }
           onDismiss={campaign?.status === "COMPLETED" ? dismiss : undefined}
-        />
-      )}
-      {showOpenButton && (
-        <SendTerminalLauncher
-          subject={campaign?.subject}
-          status={starting ? "QUEUED" : campaign?.status}
-          onOpen={openTerminal}
         />
       )}
     </SendProgressContext.Provider>
@@ -368,48 +321,12 @@ export function campaignCounts(campaign: LiveCampaign | null) {
   return { ...counts, total, progress };
 }
 
-function SendTerminalLauncher({
-  subject,
-  status,
-  onOpen,
-}: {
-  subject?: string;
-  status?: string;
-  onOpen: () => void;
-}) {
-  const [mounted, setMounted] = useState(false);
-  useEffect(() => setMounted(true), []);
-  if (!mounted) return null;
-
-  return createPortal(
-    <div
-      data-overlay=""
-      className="px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-2 sm:px-6"
-      style={{ position: "fixed", inset: "auto 0 0 0", zIndex: 450, pointerEvents: "none" }}
-    >
-      <div className="pointer-events-auto mx-auto flex max-w-3xl justify-end">
-        <button
-          type="button"
-          className="ui-btn ui-btn-primary shadow-[0_8px_24px_rgba(21,32,43,0.18)]"
-          onClick={onOpen}
-          title={subject?.trim() || "Open send terminal"}
-        >
-          Send terminal
-          {status ? ` · ${status}` : ""}
-        </button>
-      </div>
-    </div>,
-    document.body,
-  );
-}
-
 function SendProgressDock({
   campaign,
   starting,
   cancelling,
   minimized,
   onToggle,
-  onClose,
   onStop,
   onDismiss,
 }: {
@@ -418,7 +335,6 @@ function SendProgressDock({
   cancelling?: boolean;
   minimized: boolean;
   onToggle: () => void;
-  onClose: () => void;
   onStop?: () => void;
   onDismiss?: () => void;
 }) {
@@ -480,12 +396,9 @@ function SendProgressDock({
               <button type="button" className="ui-btn ui-btn-ghost !px-2.5 !py-1 text-xs" onClick={onToggle}>
                 {minimized ? "Open" : "Mini"}
               </button>
-              <button type="button" className="ui-btn ui-btn-ghost !px-2.5 !py-1 text-xs" onClick={onClose}>
-                Hide
-              </button>
               {onDismiss && (
                 <button type="button" className="ui-btn ui-btn-ghost !px-2.5 !py-1 text-xs" onClick={onDismiss}>
-                  Clear
+                  Close
                 </button>
               )}
             </div>
